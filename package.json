@@ -1,0 +1,157 @@
+{
+  "name": "auto-docker-extension",
+  "displayName": "Auto Docker Extension",
+  "description": "AI-powered Docker file generator. Analyzes your project and creates optimized Dockerfile, docker-compose.yml, and nginx.conf files instantly!",
+  "publisher": "auto-docker-publisher",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/auto-docker/auto-docker-extension.git"
+  },
+  "bugs": {
+    "url": "https://github.com/auto-docker/auto-docker-extension/issues"
+  },
+  "homepage": "https://github.com/auto-docker/auto-docker-extension#readme",
+  "license": "MIT",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "docker",
+    "dockerfile",
+    "docker-compose",
+    "ai",
+    "llm",
+    "automation",
+    "devops"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "autoDocker.analyzeProject",
+        "title": "Analyze Project & Generate Docker Files",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.regenerateDockerFiles",
+        "title": "Regenerate Docker Files",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.analyzeProjectDirect",
+        "title": "Generate Docker Files (Direct Mode)",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.configureApiKeys",
+        "title": "Configure API Keys",
+        "category": "Auto Docker"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "autoDocker.analyzeProject",
+          "group": "autoDocker",
+          "when": "explorerResourceIsRoot"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "autoDocker.analyzeProject"
+        },
+        {
+          "command": "autoDocker.regenerateDockerFiles"
+        },
+        {
+          "command": "autoDocker.analyzeProjectDirect"
+        },
+        {
+          "command": "autoDocker.configureApiKeys"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Auto Docker Extension",
+      "properties": {
+        "autoDocker.apiProvider": {
+          "type": "string",
+          "enum": [
+            "openai",
+            "gemini"
+          ],
+          "default": "openai",
+          "description": "Select the LLM API provider for Docker file generation"
+        },
+        "autoDocker.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key for GPT integration"
+        },
+        "autoDocker.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API key for Gemini integration"
+        },
+        "autoDocker.model": {
+          "type": "string",
+          "default": "gpt-4",
+          "description": "Model name to use (e.g., gpt-4, gpt-3.5-turbo, gemini-pro)"
+        },
+        "autoDocker.overwriteFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically overwrite existing Docker files without confirmation"
+        },
+        "autoDocker.includeNginx": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include nginx.conf generation for frontend projects"
+        },
+        "autoDocker.dockerOutputPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path for Docker files (relative to workspace root). Leave empty for root."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.105.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@typescript-eslint/eslint-plugin": "^8.45.0",
+    "@typescript-eslint/parser": "^8.45.0",
+    "eslint": "^9.36.0",
+    "esbuild": "^0.25.10",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2"
+  },
+  "dependencies": {
+    "openai": "^4.67.3",
+    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.7.8"
+  }
+}
