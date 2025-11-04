@@ -103,6 +103,70 @@ MIT License - see LICENSE file for details.
 - OpenAI & Google Gemini APIs
 - Docker community
 
+## 🛠️ Development Setup
+
+If you want to clone this repository and run the extension locally for development:
+
+### Prerequisites
+- [Node.js](https://nodejs.org/) (v16 or higher)
+- [VS Code](https://code.visualstudio.com/)
+- [Git](https://git-scm.com/)
+
+### Clone and Setup
+```bash
+# Clone the repository
+git clone https://github.com/shinjansarkar/Auto-Docker.git
+cd Auto-Docker
+
+# Install dependencies
+npm install
+
+# Compile the extension
+npm run compile
+```
+
+### Running the Extension
+```bash
+# Option 1: Launch Extension Development Host
+code .
+# Then press F5 to open a new VS Code window with the extension loaded
+
+# Option 2: Watch mode for development
+npm run watch
+# In another terminal, open VS Code and press F5
+
+# Option 3: Package and install locally
+npm run package
+code --install-extension auto-docker-extension-1.0.0.vsix
+```
+
+### Available Scripts
+| Command | Description |
+|---------|-------------|
+| `npm run compile` | Compile TypeScript to JavaScript |
+| `npm run watch` | Watch for changes and auto-compile |
+| `npm run package` | Create VSIX package for distribution |
+| `npm test` | Run tests (if available) |
+
+### Testing Your Changes
+1. Make changes to the source code in `src/`
+2. Press `Ctrl+Shift+F5` to reload the Extension Development Host
+3. Test your extension commands with `Ctrl+Shift+P`
+
+### Project Structure
+```
+Auto-Docker/
+├── src/                     # TypeScript source code
+│   ├── extension.ts         # Main extension entry point
+│   ├── projectAnalyzer.ts   # Project structure analysis
+│   ├── llmService.ts        # AI integration (GPT/Gemini)
+│   └── fileManager.ts       # File operations and preview
+├── dist/                    # Compiled JavaScript output
+├── images/                  # Extension icons and assets
+├── package.json             # Extension manifest and dependencies
+└── README.md               # This file
+```
+
 ---
 
 **Happy Dockerizing! 🐳✨**
