@@ -133,7 +133,7 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
             progress.report({ increment: 90, message: "Writing Docker files..." });
             outputChannel.appendLine('📝 Writing Docker files to workspace...');
             
-            await fileManager.writeDockerFiles(dockerFiles);
+            await fileManager.writeDockerFiles(dockerFiles, projectStructure);
             
             progress.report({ increment: 100, message: "Complete!" });
             outputChannel.appendLine('✅ Docker files generated successfully!');

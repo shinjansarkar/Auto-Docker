@@ -13,7 +13,7 @@
   },
   "homepage": "https://github.com/auto-docker/auto-docker-extension#readme",
   "license": "MIT",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "engines": {
     "vscode": "^1.105.0"
   },

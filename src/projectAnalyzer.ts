@@ -10,6 +10,8 @@ export interface ProjectStructure {
     dependencies: { [key: string]: any };
     hasMultiStage: boolean;
     description: string;
+    hasEnvFile?: boolean;
+    envVars?: string[];
 }
 
 export class ProjectAnalyzer {
@@ -23,6 +25,7 @@ export class ProjectAnalyzer {
         const files = await this.getProjectFiles();
         const packageInfo = await this.analyzePackageFiles();
         const projectType = this.detectProjectType(files, packageInfo);
+        const envInfo = await this.analyzeEnvFiles();
         
         return {
             projectType: projectType.type,
@@ -32,7 +35,9 @@ export class ProjectAnalyzer {
             files: files.slice(0, 50), // Limit files for LLM context
             dependencies: packageInfo,
             hasMultiStage: this.shouldUseMultiStage(projectType),
-            description: this.generateProjectDescription(projectType, files)
+            description: this.generateProjectDescription(projectType, files),
+            hasEnvFile: envInfo.hasEnvFile,
+            envVars: envInfo.envVars
         };
     }
 
@@ -124,6 +129,48 @@ export class ProjectAnalyzer {
         return packageInfo;
     }
 
+    private async analyzeEnvFiles(): Promise<{ hasEnvFile: boolean; envVars: string[] }> {
+        const envInfo = {
+            hasEnvFile: false,
+            envVars: [] as string[]
+        };
+
+        try {
+            // Check for various .env files
+            const envFiles = ['.env', '.env.local', '.env.example', '.env.sample', '.env.development', '.env.production'];
+            
+            for (const envFile of envFiles) {
+                const envUri = vscode.Uri.file(path.join(this.workspaceRoot, envFile));
+                try {
+                    const envContent = await vscode.workspace.fs.readFile(envUri);
+                    const envText = envContent.toString();
+                    
+                    if (envFile === '.env' || envFile === '.env.example' || envFile === '.env.sample') {
+                        envInfo.hasEnvFile = true;
+                        
+                        // Extract environment variable names (not values for security)
+                        const lines = envText.split('\n');
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+                                const varName = trimmed.split('=')[0].trim();
+                                if (varName && !envInfo.envVars.includes(varName)) {
+                                    envInfo.envVars.push(varName);
+                                }
+                            }
+                        }
+                    }
+                } catch {
+                    // File doesn't exist, continue
+                }
+            }
+        } catch (error) {
+            console.error('Error analyzing .env files:', error);
+        }
+
+        return envInfo;
+    }
+
     private detectProjectType(files: string[], packageInfo: { [key: string]: any }): any {
         const result = {
             type: 'unknown',
@@ -138,7 +185,15 @@ export class ProjectAnalyzer {
             const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
             // Frontend frameworks
-            if (deps.react || deps['@types/react']) {
+            if (deps.vite) {
+                // Vite detection - check what framework it's using
+                result.frontend = 'vite';
+                if (deps.react || deps['@types/react']) {
+                    result.frontend = 'vite-react';
+                } else if (deps.vue) {
+                    result.frontend = 'vite-vue';
+                }
+            } else if (deps.react || deps['@types/react']) {
                 result.frontend = 'react';
             } else if (deps.vue || deps['@vue/cli']) {
                 result.frontend = 'vue';
@@ -236,6 +291,9 @@ export class ProjectAnalyzer {
                projectType.frontend === 'react' || 
                projectType.frontend === 'angular' || 
                projectType.frontend === 'vue' ||
+               projectType.frontend === 'vite' ||
+               projectType.frontend === 'vite-react' ||
+               projectType.frontend === 'vite-vue' ||
                projectType.backend === 'nestjs' ||
                projectType.backend === 'spring-boot';
     }

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { DockerFiles } from './llmService';
+import { ProjectStructure } from './projectAnalyzer';
 
 export class FileManager {
     private workspaceRoot: string;
@@ -9,7 +10,7 @@ export class FileManager {
         this.workspaceRoot = workspaceRoot;
     }
 
-    async writeDockerFiles(dockerFiles: DockerFiles): Promise<void> {
+    async writeDockerFiles(dockerFiles: DockerFiles, projectStructure?: ProjectStructure): Promise<void> {
         const config = vscode.workspace.getConfiguration('autoDocker');
         const customPath = config.get<string>('dockerOutputPath', '');
         const overwriteFiles = config.get<boolean>('overwriteFiles', false);
@@ -26,6 +27,21 @@ export class FileManager {
 
         if (dockerFiles.nginxConf) {
             filesToWrite.push({ name: 'nginx.conf', content: dockerFiles.nginxConf });
+        }
+
+        // Add .env.example if env vars detected but .env.example doesn't exist
+        if (projectStructure?.hasEnvFile && projectStructure.envVars && projectStructure.envVars.length > 0) {
+            const envExamplePath = path.join(this.workspaceRoot, '.env.example');
+            const envExampleUri = vscode.Uri.file(envExamplePath);
+            
+            try {
+                await vscode.workspace.fs.stat(envExampleUri);
+                // .env.example already exists, don't overwrite
+            } catch {
+                // Create .env.example
+                const envExampleContent = this.generateEnvExample(projectStructure.envVars);
+                filesToWrite.push({ name: '.env.example', content: envExampleContent });
+            }
         }
 
         const existingFiles: string[] = [];
@@ -139,6 +155,41 @@ export class FileManager {
         }
 
         return true;
+    }
+
+    private generateEnvExample(envVars: string[]): string {
+        const header = `# Environment Variables Template
+# Copy this file to .env and fill in your actual values
+# DO NOT commit .env to version control
+
+`;
+        const vars = envVars.map(varName => {
+            // Add helpful comments for common env vars
+            const comment = this.getEnvVarComment(varName);
+            return comment ? `# ${comment}\n${varName}=\n` : `${varName}=\n`;
+        }).join('\n');
+
+        return header + vars;
+    }
+
+    private getEnvVarComment(varName: string): string {
+        const upperName = varName.toUpperCase();
+        
+        if (upperName.includes('PORT')) return 'Application port';
+        if (upperName.includes('DATABASE') || upperName.includes('DB')) {
+            if (upperName.includes('URL') || upperName.includes('URI')) return 'Database connection string';
+            if (upperName.includes('HOST')) return 'Database host';
+            if (upperName.includes('USER')) return 'Database username';
+            if (upperName.includes('PASSWORD') || upperName.includes('PASS')) return 'Database password';
+            if (upperName.includes('NAME')) return 'Database name';
+        }
+        if (upperName.includes('API_KEY') || upperName.includes('APIKEY')) return 'API key';
+        if (upperName.includes('SECRET')) return 'Secret key';
+        if (upperName.includes('NODE_ENV')) return 'Environment (development, production, test)';
+        if (upperName.includes('JWT')) return 'JWT configuration';
+        if (upperName.includes('REDIS')) return 'Redis configuration';
+        
+        return '';
     }
 
     async backupExistingFiles(): Promise<void> {
