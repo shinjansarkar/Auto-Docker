@@ -111,6 +111,9 @@ export class LLMService {
         const isPython = projectStructure.backend === 'flask' || projectStructure.backend === 'django' || projectStructure.backend === 'fastapi';
         const pythonFramework = projectStructure.backend;
         const isFrontend = projectStructure.frontend && (projectStructure.frontend === 'react' || projectStructure.frontend.includes('vite') || projectStructure.frontend === 'vue' || projectStructure.frontend === 'angular');
+        const isNextJs = projectStructure.frontend === 'nextjs';
+        const isNuxt = projectStructure.frontend === 'nuxt';
+        const isSvelteKit = projectStructure.frontend === 'sveltekit';
 
         return `
 Generate COMPACT, production-ready Docker files for this project:
@@ -124,6 +127,9 @@ DEPS: ${JSON.stringify(projectStructure.dependencies?.packageJson?.dependencies 
 ${projectStructure.hasEnvFile ? `⚠️ .env file detected with variables: ${projectStructure.envVars?.slice(0, 10).join(', ')}` : ''}
 ${projectStructure.frontend?.includes('vite') ? `⚠️ CRITICAL: This is a VITE project - build output goes to ${buildDir} NOT build/` : ''}
 ${isFrontend ? `⚠️ CRITICAL: Frontend app - Use nginx reverse proxy on port 80 pointing to app:3000` : ''}
+${isNextJs ? `⚠️ CRITICAL: Next.js - Use standalone output with node server.js, NOT nginx` : ''}
+${isNuxt ? `⚠️ CRITICAL: Nuxt - Use .output directory with node .output/server/index.mjs` : ''}
+${isSvelteKit ? `⚠️ CRITICAL: SvelteKit - Use node adapter with node build` : ''}
 ${isPython && pythonFramework === 'flask' ? `⚠️ CRITICAL: Flask app - MUST install gunicorn and use CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]` : ''}
 ${isPython && pythonFramework === 'django' ? `⚠️ CRITICAL: Django app - MUST install gunicorn and use CMD ["gunicorn", "wsgi:application"]` : ''}
 ${isPython && pythonFramework === 'fastapi' ? `⚠️ CRITICAL: FastAPI app - MUST install uvicorn and use CMD ["uvicorn", "main:app"]` : ''}
@@ -139,8 +145,11 @@ REQUIREMENTS:
 ${projectStructure.frontend?.includes('vite') ? `- MUST use ${buildDir} directory (Vite builds to ${buildDir})` : ''}
 ${projectStructure.hasEnvFile ? `- Add env_file: .env in docker-compose.yml for app service` : ''}
 ${isPython ? `- For Python: install production server (gunicorn/uvicorn) separately in Dockerfile` : ''}
-${isFrontend ? `- For Frontend: app exposes port 3000, nginx service on port 80 with reverse proxy to http://app:3000` : ''}
-${isFrontend ? `- nginx.conf must include: proxy_pass http://app:3000; with proper headers` : ''}
+${isFrontend && !isNextJs && !isNuxt && !isSvelteKit ? `- For Static SPAs: Single nginx service with try_files for routing` : ''}
+${isFrontend && !isNextJs && !isNuxt && !isSvelteKit ? `- nginx.conf MUST include: try_files $uri $uri/ /index.html for SPA routing` : ''}
+- ALWAYS use fallback: if [ -f package-lock.json ]; npm ci; elif [ -f yarn.lock ]; yarn install; elif [ -f pnpm-lock.yaml ]; pnpm install; else npm install; fi
+- For static frontends: Single service (web or app) exposing port 80 with nginx
+- For SSR (Next.js/Nuxt/SvelteKit): Expose Node.js app on port 3000
 - Production-optimized, secure
 
 FORMAT (NO extra text, only code blocks):
@@ -181,9 +190,25 @@ ${includeNginx && projectStructure.frontend ? `
         if (projectStructure.frontend === 'vue') {
             return 'dist';
         }
+        // Svelte uses 'public/build' or 'build'
+        if (projectStructure.frontend === 'svelte' || projectStructure.frontend === 'sveltekit') {
+            return 'build';
+        }
+        // Solid.js uses 'dist'
+        if (projectStructure.frontend === 'solid') {
+            return 'dist';
+        }
+        // Preact uses 'build'
+        if (projectStructure.frontend === 'preact') {
+            return 'build';
+        }
         // Next.js uses '.next' and special setup
         if (projectStructure.frontend === 'nextjs') {
             return '.next';
+        }
+        // Nuxt uses '.nuxt' and '.output'
+        if (projectStructure.frontend === 'nuxt') {
+            return '.output';
         }
         // Default to 'dist'
         return 'dist';
@@ -244,35 +269,133 @@ ${includeNginx && projectStructure.frontend ? `
         }
 
         if (!result.nginxConf && projectStructure.frontend) {
-            result.nginxConf = this.generateFallbackNginx();
+            // Use reverse proxy mode for development or when configured
+            const useReverseProxy = this.shouldUseReverseProxy(projectStructure);
+            result.nginxConf = useReverseProxy 
+                ? this.generateNginxReverseProxy() 
+                : this.generateFallbackNginx();
         }
+    }
+
+    private shouldUseReverseProxy(projectStructure: ProjectStructure): boolean {
+        // Check user configuration first
+        const config = vscode.workspace.getConfiguration('autoDocker');
+        const userPreference = config.get<boolean>('useReverseProxy', true);
+        
+        // If user disabled reverse proxy, always use static serving
+        if (!userPreference) {
+            return false;
+        }
+        
+        // ALWAYS use reverse proxy for ANY frontend application detected
+        // This includes: React, Vue, Angular, Vite, Svelte, Solid, Preact, Ember
+        // Excludes: SSR frameworks (Next.js, Nuxt, SvelteKit) - they run their own Node server
+        if (projectStructure.frontend) {
+            const ssrFrameworks = ['nextjs', 'nuxt', 'sveltekit'];
+            const isSSR = ssrFrameworks.includes(projectStructure.frontend);
+            
+            // Use reverse proxy for all non-SSR frontends
+            return !isSSR;
+        }
+        
+        return false;
     }
 
     private generateFallbackDockerfile(projectStructure: ProjectStructure): string {
         if (projectStructure.dependencies.packageJson) {
             const pkg = projectStructure.dependencies.packageJson;
-            const hasReact = pkg.dependencies?.react || pkg.devDependencies?.react;
             const buildDir = this.getBuildDirectory(projectStructure);
             
-            if (hasReact || projectStructure.frontend) {
-                // Multi-stage build for frontend projects
+            // Check if it's a frontend project that needs build
+            if (projectStructure.frontend) {
+                // Framework-specific Dockerfiles
+                if (projectStructure.frontend === 'nextjs') {
+                    return this.generateNextJsDockerfile();
+                }
+                
+                if (projectStructure.frontend === 'nuxt') {
+                    return this.generateNuxtDockerfile();
+                }
+                
+                if (projectStructure.frontend === 'sveltekit') {
+                    return this.generateSvelteKitDockerfile();
+                }
+                
+                // Check if using reverse proxy mode
+                const useReverseProxy = this.shouldUseReverseProxy(projectStructure);
+                if (useReverseProxy) {
+                    return this.generateFrontendDevDockerfile();
+                }
+                
+                // Generic frontend build (React, Vue, Vite, Svelte, Solid, Preact, etc.)
                 return `FROM node:18-alpine AS build
 WORKDIR /app
+
+# Copy package files
 COPY package*.json ./
-RUN npm ci
+
+# Install dependencies with fallback
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
+    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \\
+    else npm install; fi
+
+# Copy source and build
 COPY . .
 RUN npm run build
 
+# Production stage with nginx
 FROM nginx:alpine
+
+# Copy custom nginx config
+COPY <<EOF /etc/nginx/conf.d/default.conf
+server {
+    listen 80;
+    server_name localhost;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml+rss image/svg+xml;
+
+    # SPA fallback
+    location / {
+        try_files \\$uri \\$uri/ /index.html;
+    }
+
+    # Cache static assets
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\\$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+EOF
+
+# Copy built files
 COPY --from=build /app/${buildDir} /usr/share/nginx/html
+
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]`;
             } else {
+                // Backend Node.js application
                 return `FROM node:18-alpine
 WORKDIR /app
+
+# Copy package files
 COPY package*.json ./
-RUN npm ci --only=production
+
+# Install dependencies with fallback
+RUN if [ -f package-lock.json ]; then npm ci --only=production --prefer-offline; \\
+    elif [ -f yarn.lock ]; then yarn install --production --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --prod --frozen-lockfile; \\
+    else npm install --production; fi
+
+# Copy application
 COPY . .
+
 EXPOSE 3000
 CMD ["npm", "start"]`;
             }
@@ -372,11 +495,24 @@ CMD ["sh"]`;
     private generateFallbackCompose(projectStructure: ProjectStructure): string {
         // Determine correct port based on framework
         let appPort = '3000';
-        let useNginxProxy = false;
+        let isSsr = false; // Server-side rendering frameworks
+        const useReverseProxy = this.shouldUseReverseProxy(projectStructure);
         
-        if (projectStructure.frontend === 'react' || projectStructure.frontend?.includes('vite')) {
+        // SSR frameworks that need their own server
+        if (projectStructure.frontend === 'nextjs' || 
+            projectStructure.frontend === 'nuxt' || 
+            projectStructure.frontend === 'sveltekit') {
+            isSsr = true;
             appPort = '3000';
-            useNginxProxy = true; // Use nginx as reverse proxy for frontend
+        } else if (projectStructure.frontend === 'react' || 
+                   projectStructure.frontend?.includes('vite') ||
+                   projectStructure.frontend === 'vue' ||
+                   projectStructure.frontend === 'angular' ||
+                   projectStructure.frontend === 'svelte' ||
+                   projectStructure.frontend === 'solid' ||
+                   projectStructure.frontend === 'preact') {
+            // Static build frontends
+            appPort = useReverseProxy ? '3000' : '80'; // Use 3000 for reverse proxy, 80 for direct nginx
         } else if (projectStructure.backend === 'flask') {
             appPort = '5000';
         } else if (projectStructure.backend === 'django' || projectStructure.backend === 'fastapi') {
@@ -385,26 +521,61 @@ CMD ["sh"]`;
         
         const hasEnv = projectStructure.hasEnvFile;
         
-        if (useNginxProxy) {
-            // Frontend with nginx reverse proxy
+        // Reverse proxy mode: separate app and nginx services
+        if (useReverseProxy && projectStructure.frontend) {
             return `services:
   app:
     build: .
-    expose:
-      - "${appPort}"${hasEnv ? `
+    ports:
+      - "${appPort}:${appPort}"${hasEnv ? `
     env_file:
       - .env` : ''}${projectStructure.database ? `
     depends_on:
       - ${projectStructure.database}` : ''}
+    networks:
+      - app-network
 
   nginx:
     image: nginx:alpine
     ports:
       - "80:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
     depends_on:
-      - app${projectStructure.database ? `
+      - app
+    networks:
+      - app-network${projectStructure.database ? `
+
+  ${projectStructure.database}:
+    image: ${this.getDatabaseImage(projectStructure.database)}
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    volumes:
+      - db:/var/lib/postgresql/data
+    networks:
+      - app-network` : ''}
+
+networks:
+  app-network:
+    driver: bridge${projectStructure.database ? `
+
+volumes:
+  db:` : ''}`;
+        }
+        
+        // For static frontends (React, Vue, Vite, Angular) - single nginx service
+        if (projectStructure.frontend && !isSsr && !projectStructure.backend) {
+            return `services:
+  web:
+    build: .
+    ports:
+      - "80:80"${hasEnv ? `
+    env_file:
+      - .env` : ''}${projectStructure.database ? `
+    depends_on:
+      - ${projectStructure.database}` : ''}${projectStructure.database ? `
 
   ${projectStructure.database}:
     image: ${this.getDatabaseImage(projectStructure.database)}
@@ -418,7 +589,7 @@ CMD ["sh"]`;
 volumes:
   db:` : ''}`;
         } else {
-            // Backend without nginx proxy
+            // SSR frameworks or backend - expose app port directly
             return `services:
   app:
     build: .
@@ -428,14 +599,16 @@ volumes:
       - .env` : ''}${projectStructure.database ? `
     depends_on:
       - ${projectStructure.database}` : ''}${projectStructure.database ? `
+
   ${projectStructure.database}:
     image: ${this.getDatabaseImage(projectStructure.database)}
     environment:
       POSTGRES_DB: app
-      POSTGRES_USER: user  
+      POSTGRES_USER: user
       POSTGRES_PASSWORD: pass
     volumes:
       - db:/var/lib/postgresql/data` : ''}${projectStructure.database ? `
+
 volumes:
   db:` : ''}`;
         }
@@ -466,12 +639,168 @@ build
 README.md`;
     }
 
+    private generateNextJsDockerfile(): string {
+        return `FROM node:18-alpine AS deps
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
+    else npm install; fi
+
+FROM node:18-alpine AS builder
+WORKDIR /app
+
+# Copy dependencies
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Build Next.js app
+RUN npm run build
+
+FROM node:18-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
+
+# Create system user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy necessary files
+COPY --from=builder /app/next.config.js ./
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./package.json
+
+# Copy built application
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+
+EXPOSE 3000
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+
+CMD ["node", "server.js"]`;
+    }
+
+    private generateNuxtDockerfile(): string {
+        return `FROM node:18-alpine AS build
+WORKDIR /app
+
+COPY package*.json ./
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
+    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \\
+    else npm install; fi
+
+COPY . .
+RUN npm run build
+
+FROM node:18-alpine
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=build /app/.output /app/.output
+
+EXPOSE 3000
+ENV PORT 3000
+ENV HOST 0.0.0.0
+
+CMD ["node", ".output/server/index.mjs"]`;
+    }
+
+    private generateSvelteKitDockerfile(): string {
+        return `FROM node:18-alpine AS build
+WORKDIR /app
+
+COPY package*.json ./
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
+    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \\
+    else npm install; fi
+
+COPY . .
+RUN npm run build
+
+FROM node:18-alpine
+WORKDIR /app
+
+COPY --from=build /app/build ./build
+COPY --from=build /app/package*.json ./
+COPY --from=build /app/node_modules ./node_modules
+
+EXPOSE 3000
+ENV PORT 3000
+
+CMD ["node", "build"]`;
+    }
+
+    private generateFrontendDevDockerfile(): string {
+        return `FROM node:18-alpine
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with fallback
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
+    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \\
+    else npm install; fi
+
+# Copy all source files
+COPY . .
+
+# Expose port for dev server
+EXPOSE 3000
+
+# Run development server
+# This will work for most frameworks: Vite, CRA, Vue CLI, Angular, etc.
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]`;
+    }
+
     private generateFallbackNginx(): string {
         return `server {
     listen 80;
     server_name localhost;
+    root /usr/share/nginx/html;
+    index index.html;
 
-    # For reverse proxy to Node.js/React dev server on port 3000
+    # Enable gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml+rss image/svg+xml;
+
+    # SPA fallback - serve index.html for all routes
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Cache static assets
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+}`;
+    }
+
+    private generateNginxReverseProxy(): string {
+        return `server {
+    listen 80;
+    server_name localhost;
+
+    # Reverse proxy to Node.js app on port 3000
     location / {
         proxy_pass http://app:3000;
         proxy_http_version 1.1;
@@ -484,18 +813,11 @@ README.md`;
         proxy_cache_bypass $http_upgrade;
     }
 
-    # For static assets (if using production build)
-    location /static/ {
-        alias /usr/share/nginx/html/static/;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # Gzip compression
+    # Enable gzip
     gzip on;
     gzip_vary on;
     gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml text/javascript application/javascript application/json application/xml+rss;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/json;
 }`;
     }
 }

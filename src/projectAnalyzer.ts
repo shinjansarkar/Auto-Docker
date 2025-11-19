@@ -12,6 +12,11 @@ export interface ProjectStructure {
     description: string;
     hasEnvFile?: boolean;
     envVars?: string[];
+    isMonorepo?: boolean;
+    frontendPath?: string;
+    backendPath?: string;
+    frontendDependencies?: any;
+    backendDependencies?: any;
 }
 
 export class ProjectAnalyzer {
@@ -24,7 +29,8 @@ export class ProjectAnalyzer {
     async analyzeProject(): Promise<ProjectStructure> {
         const files = await this.getProjectFiles();
         const packageInfo = await this.analyzePackageFiles();
-        const projectType = this.detectProjectType(files, packageInfo);
+        const monorepoInfo = await this.detectMonorepo();
+        const projectType = this.detectProjectType(files, packageInfo, monorepoInfo);
         const envInfo = await this.analyzeEnvFiles();
         
         return {
@@ -37,7 +43,12 @@ export class ProjectAnalyzer {
             hasMultiStage: this.shouldUseMultiStage(projectType),
             description: this.generateProjectDescription(projectType, files),
             hasEnvFile: envInfo.hasEnvFile,
-            envVars: envInfo.envVars
+            envVars: envInfo.envVars,
+            isMonorepo: monorepoInfo.isMonorepo,
+            frontendPath: monorepoInfo.frontendPath,
+            backendPath: monorepoInfo.backendPath,
+            frontendDependencies: monorepoInfo.frontendDependencies,
+            backendDependencies: monorepoInfo.backendDependencies
         };
     }
 
@@ -171,7 +182,95 @@ export class ProjectAnalyzer {
         return envInfo;
     }
 
-    private detectProjectType(files: string[], packageInfo: { [key: string]: any }): any {
+    private async detectMonorepo(): Promise<{ 
+        isMonorepo: boolean; 
+        frontendPath?: string; 
+        backendPath?: string;
+        frontendDependencies?: any;
+        backendDependencies?: any;
+    }> {
+        const result = {
+            isMonorepo: false,
+            frontendPath: undefined as string | undefined,
+            backendPath: undefined as string | undefined,
+            frontendDependencies: undefined as any,
+            backendDependencies: undefined as any
+        };
+
+        try {
+            // Check for common monorepo folder structures
+            const commonFrontendFolders = ['frontend', 'client', 'web', 'app'];
+            const commonBackendFolders = ['backend', 'server', 'api'];
+
+            // Check for frontend folder
+            for (const folder of commonFrontendFolders) {
+                const folderPath = path.join(this.workspaceRoot, folder);
+                const packageJsonPath = path.join(folderPath, 'package.json');
+                const packageUri = vscode.Uri.file(packageJsonPath);
+                
+                try {
+                    const packageContent = await vscode.workspace.fs.readFile(packageUri);
+                    const packageJson = JSON.parse(packageContent.toString());
+                    
+                    // Check if it's a frontend project
+                    const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                    if (deps.react || deps.vue || deps['@angular/core'] || deps.vite || deps.next || deps.nuxt || deps.svelte) {
+                        result.frontendPath = folder;
+                        result.frontendDependencies = packageJson;
+                        result.isMonorepo = true;
+                    }
+                } catch {
+                    // Folder doesn't exist or no package.json
+                }
+            }
+
+            // Check for backend folder
+            for (const folder of commonBackendFolders) {
+                const folderPath = path.join(this.workspaceRoot, folder);
+                const packageJsonPath = path.join(folderPath, 'package.json');
+                const packageUri = vscode.Uri.file(packageJsonPath);
+                
+                try {
+                    const packageContent = await vscode.workspace.fs.readFile(packageUri);
+                    const packageJson = JSON.parse(packageContent.toString());
+                    
+                    // Check if it's a backend project
+                    const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                    if (deps.express || deps.fastify || deps.nestjs || deps['@nestjs/core'] || deps.koa) {
+                        result.backendPath = folder;
+                        result.backendDependencies = packageJson;
+                        result.isMonorepo = true;
+                    }
+                } catch {
+                    // Folder doesn't exist or no package.json
+                }
+
+                // Also check for Python backend
+                const requirementsTxtPath = path.join(folderPath, 'requirements.txt');
+                const requirementsUri = vscode.Uri.file(requirementsTxtPath);
+                
+                try {
+                    const requirementsContent = await vscode.workspace.fs.readFile(requirementsUri);
+                    const requirements = requirementsContent.toString().toLowerCase();
+                    
+                    if (requirements.includes('flask') || requirements.includes('django') || requirements.includes('fastapi')) {
+                        result.backendPath = folder;
+                        result.backendDependencies = { requirementsTxt: requirementsContent.toString() };
+                        result.isMonorepo = true;
+                    }
+                } catch {
+                    // File doesn't exist
+                }
+            }
+
+        } catch (error) {
+            console.error('Error detecting monorepo structure:', error);
+        }
+
+        return result;
+    }
+
+    private detectProjectType(files: string[], packageInfo: { [key: string]: any }, monorepoInfo?: any): any {
         const result = {
             type: 'unknown',
             frontend: undefined as string | undefined,
@@ -192,6 +291,8 @@ export class ProjectAnalyzer {
                     result.frontend = 'vite-react';
                 } else if (deps.vue) {
                     result.frontend = 'vite-vue';
+                } else if (deps.svelte) {
+                    result.frontend = 'vite-svelte';
                 }
             } else if (deps.react || deps['@types/react']) {
                 result.frontend = 'react';
@@ -205,6 +306,14 @@ export class ProjectAnalyzer {
             } else if (deps.nuxt) {
                 result.frontend = 'nuxt';
                 result.type = 'fullstack';
+            } else if (deps.svelte || deps['@sveltejs/kit']) {
+                result.frontend = deps['@sveltejs/kit'] ? 'sveltekit' : 'svelte';
+            } else if (deps['solid-js']) {
+                result.frontend = 'solid';
+            } else if (deps.preact) {
+                result.frontend = 'preact';
+            } else if (deps.ember || deps['ember-cli']) {
+                result.frontend = 'ember';
             }
 
             // Backend frameworks
@@ -294,6 +403,13 @@ export class ProjectAnalyzer {
                projectType.frontend === 'vite' ||
                projectType.frontend === 'vite-react' ||
                projectType.frontend === 'vite-vue' ||
+               projectType.frontend === 'vite-svelte' ||
+               projectType.frontend === 'svelte' ||
+               projectType.frontend === 'sveltekit' ||
+               projectType.frontend === 'solid' ||
+               projectType.frontend === 'preact' ||
+               projectType.frontend === 'nextjs' ||
+               projectType.frontend === 'nuxt' ||
                projectType.backend === 'nestjs' ||
                projectType.backend === 'spring-boot';
     }

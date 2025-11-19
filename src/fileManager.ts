@@ -19,6 +19,12 @@ export class FileManager {
             ? path.join(this.workspaceRoot, customPath)
             : this.workspaceRoot;
 
+        // Check if it's a monorepo structure
+        if (projectStructure?.isMonorepo && projectStructure.frontendPath && projectStructure.backendPath) {
+            await this.writeMonorepoDockerFiles(dockerFiles, projectStructure, overwriteFiles);
+            return;
+        }
+
         const filesToWrite = [
             { name: 'Dockerfile', content: dockerFiles.dockerfile },
             { name: 'docker-compose.yml', content: dockerFiles.dockerCompose },
@@ -452,5 +458,282 @@ export class FileManager {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+
+    private async writeMonorepoDockerFiles(dockerFiles: DockerFiles, projectStructure: ProjectStructure, overwriteFiles: boolean): Promise<void> {
+        try {
+            const frontendPath = path.join(this.workspaceRoot, projectStructure.frontendPath!);
+            const backendPath = path.join(this.workspaceRoot, projectStructure.backendPath!);
+
+            // Generate frontend Dockerfile
+            const frontendDockerfile = this.generateMonorepoFrontendDockerfile(projectStructure);
+            const frontendDockerfilePath = path.join(frontendPath, 'Dockerfile');
+            
+            // Generate backend Dockerfile
+            const backendDockerfile = this.generateMonorepoBackendDockerfile(projectStructure);
+            const backendDockerfilePath = path.join(backendPath, 'Dockerfile');
+
+            // Generate .dockerignore for both
+            const dockerignore = dockerFiles.dockerIgnore;
+            const frontendDockerignorePath = path.join(frontendPath, '.dockerignore');
+            const backendDockerignorePath = path.join(backendPath, '.dockerignore');
+
+            // Generate root-level docker-compose.yml and nginx.conf
+            const dockerComposePath = path.join(this.workspaceRoot, 'docker-compose.yml');
+            const nginxConfPath = path.join(this.workspaceRoot, 'nginx.conf');
+
+            const filesToWrite = [
+                { path: frontendDockerfilePath, content: frontendDockerfile, name: `${projectStructure.frontendPath}/Dockerfile` },
+                { path: backendDockerfilePath, content: backendDockerfile, name: `${projectStructure.backendPath}/Dockerfile` },
+                { path: frontendDockerignorePath, content: dockerignore, name: `${projectStructure.frontendPath}/.dockerignore` },
+                { path: backendDockerignorePath, content: dockerignore, name: `${projectStructure.backendPath}/.dockerignore` },
+                { path: dockerComposePath, content: this.generateMonorepoDockerCompose(projectStructure), name: 'docker-compose.yml' },
+            ];
+
+            if (dockerFiles.nginxConf) {
+                filesToWrite.push({ 
+                    path: nginxConfPath, 
+                    content: this.generateMonorepoNginxConf(projectStructure), 
+                    name: 'nginx.conf' 
+                });
+            }
+
+            // Write all files
+            for (const file of filesToWrite) {
+                const fileUri = vscode.Uri.file(file.path);
+                
+                // Check if file exists
+                let exists = false;
+                try {
+                    await vscode.workspace.fs.stat(fileUri);
+                    exists = true;
+                } catch {
+                    // File doesn't exist
+                }
+
+                if (exists && !overwriteFiles) {
+                    const choice = await vscode.window.showWarningMessage(
+                        `${file.name} already exists. Overwrite?`,
+                        'Yes', 'No'
+                    );
+                    if (choice !== 'Yes') {
+                        continue;
+                    }
+                }
+
+                await vscode.workspace.fs.writeFile(fileUri, Buffer.from(file.content, 'utf8'));
+            }
+
+            vscode.window.showInformationMessage(
+                `✅ Monorepo Docker files created successfully!\n` +
+                `- ${projectStructure.frontendPath}/Dockerfile\n` +
+                `- ${projectStructure.backendPath}/Dockerfile\n` +
+                `- docker-compose.yml\n` +
+                `- nginx.conf`
+            );
+
+        } catch (error) {
+            vscode.window.showErrorMessage(`Error writing monorepo Docker files: ${error}`);
+        }
+    }
+
+    private generateMonorepoFrontendDockerfile(projectStructure: ProjectStructure): string {
+        return `FROM node:18-alpine
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
+    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \\
+    else npm install; fi
+
+# Copy source files
+COPY . .
+
+# Expose port
+EXPOSE 3000
+
+# Run dev server
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]`;
+    }
+
+    private generateMonorepoBackendDockerfile(projectStructure: ProjectStructure): string {
+        // Check if it's Python or Node.js backend
+        const isPython = projectStructure.backendDependencies?.requirementsTxt;
+        
+        if (isPython) {
+            return `FROM python:3.11-slim
+WORKDIR /app
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt gunicorn
+
+# Copy source files
+COPY . .
+
+# Expose port
+EXPOSE 5000
+
+# Run with gunicorn
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "app:app"]`;
+        } else {
+            return `FROM node:18-alpine
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
+    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \\
+    else npm install; fi
+
+# Copy source files
+COPY . .
+
+# Expose port
+EXPOSE 5000
+
+# Run application
+CMD ["npm", "start"]`;
+        }
+    }
+
+    private generateMonorepoDockerCompose(projectStructure: ProjectStructure): string {
+        const hasEnv = projectStructure.hasEnvFile;
+        const backendPort = projectStructure.backendDependencies?.requirementsTxt ? '5000' : '5000';
+        
+        return `services:
+  frontend:
+    build: ./${projectStructure.frontendPath}
+    ports:
+      - "3000:3000"${hasEnv ? `
+    env_file:
+      - .env` : ''}
+    volumes:
+      - ./${projectStructure.frontendPath}:/app
+      - /app/node_modules
+    networks:
+      - app-network
+    depends_on:
+      - backend
+
+  backend:
+    build: ./${projectStructure.backendPath}
+    ports:
+      - "${backendPort}:${backendPort}"${hasEnv ? `
+    env_file:
+      - .env` : ''}
+    volumes:
+      - ./${projectStructure.backendPath}:/app${projectStructure.backendDependencies?.requirementsTxt ? '' : `
+      - /app/node_modules`}
+    networks:
+      - app-network${projectStructure.database ? `
+    depends_on:
+      - database` : ''}
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - app-network${projectStructure.database ? `
+
+  database:
+    image: ${this.getDatabaseImage(projectStructure.database)}
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - app-network` : ''}
+
+networks:
+  app-network:
+    driver: bridge${projectStructure.database ? `
+
+volumes:
+  db_data:` : ''}`;
+    }
+
+    private generateMonorepoNginxConf(projectStructure: ProjectStructure): string {
+        return `# Upstream servers
+upstream frontend {
+    server frontend:3000;
+}
+
+upstream backend {
+    server backend:5000;
+}
+
+server {
+    listen 80;
+    server_name localhost;
+
+    # Frontend routes
+    location / {
+        proxy_pass http://frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Backend API routes
+    location /api/ {
+        proxy_pass http://backend/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket support for Socket.io and real-time features
+    location /socket.io/ {
+        proxy_pass http://backend/socket.io/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml text/javascript application/json application/javascript application/xml+rss;
+}`;
+    }
+
+    private getDatabaseImage(database?: string): string {
+        switch (database) {
+            case 'postgresql': return 'postgres:15-alpine';
+            case 'mysql': return 'mysql:8.0';
+            case 'mongodb': return 'mongo:7';
+            default: return 'postgres:15-alpine';
+        }
     }
 }
