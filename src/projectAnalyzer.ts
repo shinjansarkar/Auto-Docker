@@ -6,6 +6,7 @@ export interface ProjectStructure {
     frontend?: string;
     backend?: string;
     database?: string;
+    databases?: string[]; // Multiple databases
     files: string[];
     dependencies: { [key: string]: any };
     hasMultiStage: boolean;
@@ -13,10 +14,17 @@ export interface ProjectStructure {
     hasEnvFile?: boolean;
     envVars?: string[];
     isMonorepo?: boolean;
+    isSingleFolderFullstack?: boolean; // Single folder with both frontend and backend
     frontendPath?: string;
     backendPath?: string;
     frontendDependencies?: any;
     backendDependencies?: any;
+    // Advanced services
+    messageQueue?: 'rabbitmq' | 'kafka' | 'redis-streams' | 'activemq';
+    cacheLayer?: 'redis' | 'memcached';
+    searchEngine?: 'elasticsearch' | 'opensearch';
+    reverseProxy?: 'nginx' | 'traefik' | 'caddy';
+    monitoring?: 'prometheus' | 'grafana';
 }
 
 export class ProjectAnalyzer {
@@ -32,12 +40,14 @@ export class ProjectAnalyzer {
         const monorepoInfo = await this.detectMonorepo();
         const projectType = this.detectProjectType(files, packageInfo, monorepoInfo);
         const envInfo = await this.analyzeEnvFiles();
+        const advancedServices = this.detectAdvancedServices(packageInfo, files);
         
         return {
             projectType: projectType.type,
             frontend: projectType.frontend,
             backend: projectType.backend,
             database: projectType.database,
+            databases: projectType.databases,
             files: files.slice(0, 50), // Limit files for LLM context
             dependencies: packageInfo,
             hasMultiStage: this.shouldUseMultiStage(projectType),
@@ -45,10 +55,16 @@ export class ProjectAnalyzer {
             hasEnvFile: envInfo.hasEnvFile,
             envVars: envInfo.envVars,
             isMonorepo: monorepoInfo.isMonorepo,
+            isSingleFolderFullstack: projectType.isSingleFolderFullstack,
             frontendPath: monorepoInfo.frontendPath,
             backendPath: monorepoInfo.backendPath,
             frontendDependencies: monorepoInfo.frontendDependencies,
-            backendDependencies: monorepoInfo.backendDependencies
+            backendDependencies: monorepoInfo.backendDependencies,
+            messageQueue: advancedServices.messageQueue,
+            cacheLayer: advancedServices.cacheLayer,
+            searchEngine: advancedServices.searchEngine,
+            reverseProxy: advancedServices.reverseProxy,
+            monitoring: advancedServices.monitoring
         };
     }
 
@@ -275,7 +291,9 @@ export class ProjectAnalyzer {
             type: 'unknown',
             frontend: undefined as string | undefined,
             backend: undefined as string | undefined,
-            database: undefined as string | undefined
+            database: undefined as string | undefined,
+            databases: [] as string[],
+            isSingleFolderFullstack: false
         };
 
         // Check for specific frameworks and languages
@@ -323,15 +341,34 @@ export class ProjectAnalyzer {
                 result.backend = 'fastify';
             } else if (deps.nestjs || deps['@nestjs/core']) {
                 result.backend = 'nestjs';
+            } else if (deps.koa) {
+                result.backend = 'koa';
             }
 
-            // Database detection
+            // Database detection (support multiple databases)
             if (deps.mongoose || deps.mongodb) {
+                result.databases.push('mongodb');
                 result.database = 'mongodb';
-            } else if (deps.pg || deps.postgresql) {
-                result.database = 'postgresql';
-            } else if (deps.mysql || deps.mysql2) {
-                result.database = 'mysql';
+            }
+            if (deps.pg || deps.postgresql || deps['pg-pool']) {
+                result.databases.push('postgresql');
+                if (!result.database) result.database = 'postgresql';
+            }
+            if (deps.mysql || deps.mysql2) {
+                result.databases.push('mysql');
+                if (!result.database) result.database = 'mysql';
+            }
+            if (deps.redis || deps.ioredis) {
+                result.databases.push('redis');
+            }
+            if (deps.sqlite3 || deps['better-sqlite3']) {
+                result.databases.push('sqlite');
+            }
+
+            // Detect single-folder fullstack (has both frontend and backend in same package.json)
+            if (result.frontend && result.backend) {
+                result.isSingleFolderFullstack = true;
+                result.type = 'fullstack';
             }
         }
 
@@ -389,6 +426,93 @@ export class ProjectAnalyzer {
                     result.type = 'static';
                 }
             }
+        }
+
+        return result;
+    }
+
+    private detectAdvancedServices(packageInfo: { [key: string]: any }, files: string[]): {
+        messageQueue?: 'rabbitmq' | 'kafka' | 'redis-streams' | 'activemq';
+        cacheLayer?: 'redis' | 'memcached';
+        searchEngine?: 'elasticsearch' | 'opensearch';
+        reverseProxy?: 'nginx' | 'traefik' | 'caddy';
+        monitoring?: 'prometheus' | 'grafana';
+    } {
+        const result: any = {};
+
+        if (packageInfo.packageJson) {
+            const deps = { 
+                ...packageInfo.packageJson.dependencies, 
+                ...packageInfo.packageJson.devDependencies 
+            };
+
+            // Message Queue Detection
+            if (deps.amqplib || deps['amqp-connection-manager']) {
+                result.messageQueue = 'rabbitmq';
+            } else if (deps.kafkajs || deps['kafka-node'] || deps['node-rdkafka']) {
+                result.messageQueue = 'kafka';
+            } else if (deps.bull || deps['bull-board']) {
+                result.messageQueue = 'redis-streams';
+            } else if (deps.activemq || deps.stompit) {
+                result.messageQueue = 'activemq';
+            }
+
+            // Cache Layer Detection
+            if (deps.redis || deps.ioredis || deps['redis-om']) {
+                result.cacheLayer = 'redis';
+            } else if (deps.memcached || deps['memcache-plus']) {
+                result.cacheLayer = 'memcached';
+            }
+
+            // Search Engine Detection
+            if (deps['@elastic/elasticsearch'] || deps.elasticsearch) {
+                result.searchEngine = 'elasticsearch';
+            } else if (deps['@opensearch-project/opensearch']) {
+                result.searchEngine = 'opensearch';
+            }
+
+            // Monitoring Detection
+            if (deps['prom-client']) {
+                result.monitoring = 'prometheus';
+            }
+        }
+
+        // Check for Python dependencies
+        if (packageInfo.requirementsTxt) {
+            const requirements = packageInfo.requirementsTxt.toLowerCase();
+            
+            if (requirements.includes('pika') || requirements.includes('kombu')) {
+                result.messageQueue = 'rabbitmq';
+            }
+            if (requirements.includes('kafka-python') || requirements.includes('confluent-kafka')) {
+                result.messageQueue = 'kafka';
+            }
+            if (requirements.includes('redis') || requirements.includes('redis-py')) {
+                result.cacheLayer = 'redis';
+            }
+            if (requirements.includes('pymemcache') || requirements.includes('python-memcached')) {
+                result.cacheLayer = 'memcached';
+            }
+            if (requirements.includes('elasticsearch')) {
+                result.searchEngine = 'elasticsearch';
+            }
+            if (requirements.includes('prometheus-client')) {
+                result.monitoring = 'prometheus';
+            }
+        }
+
+        // Check for Docker Compose or config files
+        const hasDockerCompose = files.some(f => f.includes('docker-compose'));
+        const hasNginxConf = files.some(f => f.includes('nginx.conf') || f.includes('nginx.config'));
+        const hasTraefikConf = files.some(f => f.includes('traefik'));
+        const hasCaddyfile = files.some(f => f.toLowerCase().includes('caddyfile'));
+
+        if (hasNginxConf) {
+            result.reverseProxy = 'nginx';
+        } else if (hasTraefikConf) {
+            result.reverseProxy = 'traefik';
+        } else if (hasCaddyfile) {
+            result.reverseProxy = 'caddy';
         }
 
         return result;
