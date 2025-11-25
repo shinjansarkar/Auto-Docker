@@ -1,13 +1,18 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import { ProjectAnalyzer } from './projectAnalyzer';
 import { LLMService } from './llmService';
 import { FileManager } from './fileManager';
+import { DockerTestRunner } from './testRunner';
+import { TestReporter } from './testReporter';
+import { TestProjectGenerator } from './testProjectGenerator';
 
 let outputChannel: vscode.OutputChannel;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Auto Docker Extension is now active!');
-    
+
     // Create output channel for logging
     outputChannel = vscode.window.createOutputChannel('Auto Docker');
     context.subscriptions.push(outputChannel);
@@ -29,8 +34,23 @@ export function activate(context: vscode.ExtensionContext) {
         await configureApiKeys();
     });
 
+    const runTestsCommand = vscode.commands.registerCommand('autoDocker.runTests', async () => {
+        await runComprehensiveTests();
+    });
+
+    const generateTestProjectsCommand = vscode.commands.registerCommand('autoDocker.generateTestProjects', async () => {
+        await generateTestProjects();
+    });
+
     // Add commands to subscriptions
-    context.subscriptions.push(analyzeCommand, regenerateCommand, directModeCommand, configureApiKeysCommand);
+    context.subscriptions.push(
+        analyzeCommand,
+        regenerateCommand,
+        directModeCommand,
+        configureApiKeysCommand,
+        runTestsCommand,
+        generateTestProjectsCommand
+    );
 
     // Show welcome message on first install
     const hasShownWelcome = context.globalState.get('hasShownWelcome', false);
@@ -66,10 +86,10 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
             // Step 1: Analyze project structure
             progress.report({ increment: 20, message: "Analyzing project structure..." });
             outputChannel.appendLine('📁 Analyzing project structure...');
-            
+
             const analyzer = new ProjectAnalyzer(getWorkspaceRoot());
             const projectStructure = await analyzer.analyzeProject();
-            
+
             outputChannel.appendLine(`Project type detected: ${projectStructure.projectType}`);
             if (projectStructure.frontend) {
                 outputChannel.appendLine(`Frontend: ${projectStructure.frontend}`);
@@ -84,16 +104,16 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
             // Step 2: Generate Docker files with LLM
             progress.report({ increment: 50, message: "Generating Docker files with AI..." });
             outputChannel.appendLine('🤖 Generating Docker files with LLM...');
-            
+
             const llmService = new LLMService();
             const dockerFiles = await llmService.generateDockerFiles(projectStructure);
 
             // Step 3: Show preview and get confirmation
             progress.report({ increment: 70, message: "Preparing preview..." });
             outputChannel.appendLine('👀 Preparing preview...');
-            
+
             let confirmed = false;
-            
+
             if (skipPreview) {
                 outputChannel.appendLine('Skipping preview (direct mode)...');
                 confirmed = true;
@@ -104,7 +124,7 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                     outputChannel.appendLine(`📋 Preview completed with result: ${confirmed ? '✅ CONFIRMED (Create Files clicked)' : '❌ CANCELLED (Cancel clicked or panel closed)'}`);
                 } catch (error) {
                     outputChannel.appendLine(`Preview error: ${error}. Asking user for direct creation...`);
-                    
+
                     // Ask user if they want to create files directly
                     const choice = await vscode.window.showWarningMessage(
                         'Preview failed to load. Would you like to create the Docker files directly?',
@@ -112,11 +132,11 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                         'Yes, Create Files',
                         'Cancel'
                     );
-                    
+
                     confirmed = choice === 'Yes, Create Files';
                 }
             }
-            
+
             if (!confirmed) {
                 outputChannel.appendLine('❌ File creation cancelled by user');
                 vscode.window.showInformationMessage('Docker file generation cancelled. You can try again anytime!', 'Try Direct Mode').then(choice => {
@@ -132,9 +152,9 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
             // Step 4: Write files to workspace
             progress.report({ increment: 90, message: "Writing Docker files..." });
             outputChannel.appendLine('📝 Writing Docker files to workspace...');
-            
+
             await fileManager.writeDockerFiles(dockerFiles, projectStructure);
-            
+
             progress.report({ increment: 100, message: "Complete!" });
             outputChannel.appendLine('✅ Docker files generated successfully!');
         });
@@ -161,7 +181,7 @@ async function regenerateDockerFiles(): Promise<void> {
 
 async function configureApiKeys(): Promise<void> {
     const config = vscode.workspace.getConfiguration('autoDocker');
-    
+
     const provider = await vscode.window.showQuickPick(
         ['OpenAI (GPT)', 'Google Gemini'],
         { placeHolder: 'Select your preferred AI provider' }
@@ -181,16 +201,16 @@ async function configureApiKeys(): Promise<void> {
         if (apiKey) {
             await config.update('apiProvider', 'openai', vscode.ConfigurationTarget.Global);
             await config.update('openaiApiKey', apiKey, vscode.ConfigurationTarget.Global);
-            
+
             const model = await vscode.window.showQuickPick(
                 ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'],
                 { placeHolder: 'Select model (gpt-4 recommended)' }
             );
-            
+
             if (model) {
                 await config.update('model', model, vscode.ConfigurationTarget.Global);
             }
-            
+
             vscode.window.showInformationMessage('OpenAI API configuration saved successfully!');
         }
     } else if (provider === 'Google Gemini') {
@@ -204,7 +224,7 @@ async function configureApiKeys(): Promise<void> {
             await config.update('apiProvider', 'gemini', vscode.ConfigurationTarget.Global);
             await config.update('geminiApiKey', apiKey, vscode.ConfigurationTarget.Global);
             await config.update('model', 'gemini-pro', vscode.ConfigurationTarget.Global);
-            
+
             vscode.window.showInformationMessage('Google Gemini API configuration saved successfully!');
         }
     }
@@ -213,9 +233,9 @@ async function configureApiKeys(): Promise<void> {
 async function validateApiConfiguration(): Promise<boolean> {
     const config = vscode.workspace.getConfiguration('autoDocker');
     const provider = config.get<string>('apiProvider', 'openai');
-    
+
     let isConfigured = false;
-    
+
     if (provider === 'openai') {
         const apiKey = config.get<string>('openaiApiKey');
         isConfigured = !!apiKey && apiKey.trim().length > 0;
@@ -235,7 +255,7 @@ async function validateApiConfiguration(): Promise<boolean> {
             await configureApiKeys();
             return await validateApiConfiguration(); // Re-validate after configuration
         }
-        
+
         return false;
     }
 
@@ -258,6 +278,155 @@ function showWelcomeMessage(): void {
             vscode.env.openExternal(vscode.Uri.parse('https://github.com/your-repo/auto-docker-extension#readme'));
         }
     });
+}
+
+async function runComprehensiveTests(): Promise<void> {
+    try {
+        outputChannel.clear();
+        outputChannel.show(true);
+        outputChannel.appendLine('🧪 Starting comprehensive Docker tests...\n');
+
+        const workspaceRoot = getWorkspaceRoot();
+
+        // Ask user what to test
+        const testOptions = await vscode.window.showQuickPick([
+            { label: '🎨 Frontend Frameworks', value: 'frontend' },
+            { label: '⚙️ Backend Frameworks', value: 'backend' },
+            { label: '🗄️ Databases', value: 'databases' },
+            { label: '🔄 Message Queues', value: 'queues' },
+            { label: '🔍 Search Engines', value: 'search' },
+            { label: '🌐 Reverse Proxies', value: 'proxies' },
+            { label: '🏗️ Fullstack Apps', value: 'fullstack' },
+            { label: '🚀 Run All Tests', value: 'all' }
+        ], {
+            placeHolder: 'Select what to test',
+            canPickMany: false
+        });
+
+        if (!testOptions) {
+            return;
+        }
+
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Running Docker Tests...",
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ message: "Initializing test runner..." });
+
+            const testRunner = new DockerTestRunner();
+            const summary = await testRunner.runAllTests(workspaceRoot);
+
+            progress.report({ message: "Generating reports..." });
+
+            // Generate reports
+            const reportsDir = path.join(workspaceRoot, '.test-reports');
+            if (!fs.existsSync(reportsDir)) {
+                fs.mkdirSync(reportsDir, { recursive: true });
+            }
+
+            const htmlReport = TestReporter.generateHTMLReport(summary, reportsDir);
+            const jsonReport = TestReporter.generateJSONReport(summary, reportsDir);
+            const mdReport = TestReporter.generateMarkdownReport(summary, reportsDir);
+
+            outputChannel.appendLine(`\n📊 Reports generated:`);
+            outputChannel.appendLine(`  - HTML: ${htmlReport}`);
+            outputChannel.appendLine(`  - JSON: ${jsonReport}`);
+            outputChannel.appendLine(`  - Markdown: ${mdReport}`);
+
+            // Show summary
+            const successRate = ((summary.passed / summary.totalTests) * 100).toFixed(1);
+            const message = `Tests Complete! ${summary.passed}/${summary.totalTests} passed (${successRate}%)`;
+
+            if (summary.failed === 0) {
+                vscode.window.showInformationMessage(message, 'View Report').then(choice => {
+                    if (choice === 'View Report') {
+                        vscode.env.openExternal(vscode.Uri.file(htmlReport));
+                    }
+                });
+            } else {
+                vscode.window.showWarningMessage(message, 'View Report', 'View Issues').then(choice => {
+                    if (choice === 'View Report') {
+                        vscode.env.openExternal(vscode.Uri.file(htmlReport));
+                    } else if (choice === 'View Issues') {
+                        outputChannel.show();
+                    }
+                });
+            }
+        });
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        outputChannel.appendLine(`❌ Error: ${errorMessage}`);
+        vscode.window.showErrorMessage(`Test execution failed: ${errorMessage}`);
+    }
+}
+
+async function generateTestProjects(): Promise<void> {
+    try {
+        outputChannel.clear();
+        outputChannel.show(true);
+        outputChannel.appendLine('🏗️ Generating test projects...\n');
+
+        const workspaceRoot = getWorkspaceRoot();
+
+        const confirm = await vscode.window.showWarningMessage(
+            'This will create sample projects for all supported technologies in .test-projects folder. Continue?',
+            { modal: true },
+            'Yes, Generate',
+            'Cancel'
+        );
+
+        if (confirm !== 'Yes, Generate') {
+            return;
+        }
+
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Generating test projects...",
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ message: "Creating project templates..." });
+
+            await TestProjectGenerator.generateAllTestProjects(workspaceRoot);
+
+            outputChannel.appendLine('✅ Test projects generated successfully!');
+            outputChannel.appendLine(`\nLocation: ${path.join(workspaceRoot, '.test-projects')}`);
+            outputChannel.appendLine('\nGenerated projects:');
+            outputChannel.appendLine('  Frontend:');
+            outputChannel.appendLine('    - react-vite');
+            outputChannel.appendLine('    - vue-vite');
+            outputChannel.appendLine('    - angular');
+            outputChannel.appendLine('    - nextjs');
+            outputChannel.appendLine('  Backend:');
+            outputChannel.appendLine('    - express');
+            outputChannel.appendLine('    - django');
+            outputChannel.appendLine('    - flask');
+            outputChannel.appendLine('    - fastapi');
+            outputChannel.appendLine('    - spring-boot');
+            outputChannel.appendLine('  Fullstack:');
+            outputChannel.appendLine('    - mern');
+            outputChannel.appendLine('    - django-react');
+
+            vscode.window.showInformationMessage(
+                'Test projects generated successfully!',
+                'Open Folder',
+                'Run Tests'
+            ).then(choice => {
+                if (choice === 'Open Folder') {
+                    const testProjectsUri = vscode.Uri.file(path.join(workspaceRoot, '.test-projects'));
+                    vscode.commands.executeCommand('revealFileInOS', testProjectsUri);
+                } else if (choice === 'Run Tests') {
+                    runComprehensiveTests();
+                }
+            });
+        });
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        outputChannel.appendLine(`❌ Error: ${errorMessage}`);
+        vscode.window.showErrorMessage(`Failed to generate test projects: ${errorMessage}`);
+    }
 }
 
 export function deactivate() {

@@ -85,29 +85,6 @@ An enterprise-grade VS Code extension that automatically generates production-re
    - **Google Gemini**: Get API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
 ## 🎯 Usage
-
-### Quick Start
-1. Open your project in VS Code
-2. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on Mac)
-3. Type `Auto Docker: Analyze Project`
-4. Review generated files in preview
-5. Click "Create Files" to save to workspace
-
-### Available Commands
-- `Auto Docker: Analyze Project & Generate Docker Files` - Full project analysis with AI
-- `Auto Docker: Analyze Project (Direct Mode)` - Generate without preview
-- `Auto Docker: Regenerate Docker Files` - Re-analyze and regenerate
-- `Auto Docker: Configure API Keys` - Set up OpenAI/Gemini credentials
-
-## 📂 Generated Files
-
-### For Single Projects
-- **Dockerfile**: Optimized for your tech stack with multi-stage builds
-- **docker-compose.yml**: Complete service orchestration with all detected services
-- **.dockerignore**: Optimized exclusion patterns
-- **nginx.conf**: Production-ready reverse proxy with WebSocket support
-- **.env.example**: Comprehensive environment variable template
-
 ### For Monorepo/Fullstack Projects
 ```
 project/

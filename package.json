@@ -53,6 +53,16 @@
         "command": "autoDocker.configureApiKeys",
         "title": "Configure API Keys",
         "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.runTests",
+        "title": "Run Comprehensive Tests",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.generateTestProjects",
+        "title": "Generate Test Projects",
+        "category": "Auto Docker"
       }
     ],
     "menus": {
@@ -75,6 +85,12 @@
         },
         {
           "command": "autoDocker.configureApiKeys"
+        },
+        {
+          "command": "autoDocker.runTests"
+        },
+        {
+          "command": "autoDocker.generateTestProjects"
         }
       ]
     },
