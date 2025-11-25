@@ -1,3 +1,4 @@
+# Development files
 .vscode/**
 .vscode-test/**
 out/**
@@ -12,9 +13,26 @@ esbuild.js
 **/*.map
 **/*.ts
 **/.vscode-test.*
-CONTRIBUTING.md
-RELEASE.md
-test-project/**
 *.vsix
 .github/**
 package-lock.json
+
+# Test and demo files
+.demo-test/**
+demo-docker-test.js
+test-extension.js
+test-project/**
+
+# Internal documentation (keep README, CHANGELOG, LICENSE)
+TESTING.md
+TESTING-SUMMARY.md
+FINAL-TEST-REPORT.md
+MONOREPO-TESTING.md
+QUICKSTART-TESTING.md
+IMPLEMENTATION-SUMMARY.md
+FAILURE-ANALYSIS.md
+DELIVERABLES.md
+READY-TO-USE.md
+3-DAY-LAUNCH-PLAN.md
+CONTRIBUTING.md
+RELEASE.md
