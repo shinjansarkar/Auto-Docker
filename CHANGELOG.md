@@ -5,6 +5,33 @@ All notable changes to the "Auto Docker Extension" will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2025-11-26
+
+### 🐛 Fixed - Critical Monorepo Bug
+- **Monorepo Nginx Configuration**: Fixed critical issue where `nginx.conf` was not being generated in the root directory for monorepo projects
+  - Previously, nginx.conf generation was conditional and depended on LLM output
+  - Now **ALWAYS** generates nginx.conf for monorepo structures (frontend/ + backend/)
+  - Ensures proper reverse proxy configuration for routing between frontend (port 3000) and backend (port 5000)
+  - Fixes Docker Compose failures due to missing nginx configuration file reference
+
+### 📋 Technical Details
+- **File Modified**: `src/fileManager.ts` (lines 588-602)
+- **Root Cause**: Conditional check `if (dockerFiles.nginxConf)` prevented nginx.conf generation when LLM didn't return configuration
+- **Solution**: Removed conditional check; nginx.conf now unconditionally included in monorepo file generation
+- **Impact**: All monorepo projects now receive complete Docker setup with working reverse proxy
+
+### 📚 Documentation
+- Added `MONOREPO-FIX-REQUIRED.md` with detailed analysis and implementation guide
+- Added `MONOREPO-NGINX-FIX.md` with technical implementation details
+- Updated testing documentation to reflect the fix
+
+### ✅ Verified
+- Nginx configuration correctly routes traffic to frontend:3000 and backend:5000
+- Docker Compose successfully starts all services with proper networking
+- Health checks pass for all services in monorepo setup
+
+---
+
 ## [2.5.0] - 2025-11-25
 
 ### 🚀 Added - Enterprise-Grade Features
@@ -147,6 +174,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Release Date | Key Features |
 |---------|--------------|--------------|
+| **2.5.1** | 2025-11-26 | Critical monorepo nginx fix, improved reverse proxy configuration |
 | **2.5.0** | 2025-11-25 | Enterprise features, multiple databases, message queues, search engines |
 | **2.0.0** | 2025-11-20 | AI-powered generation, multi-framework support, preview mode |
 | **1.5.0** | 2025-11-10 | Monorepo support, fallback templates, testing infrastructure |
@@ -201,8 +229,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 **Made with ❤️ for the developer community**
 
+[2.5.1]: https://github.com/shinjansarkar/Auto-Docker/releases/tag/v2.5.1
 [2.5.0]: https://github.com/shinjansarkar/Auto-Docker/releases/tag/v2.5.0
 [2.0.0]: https://github.com/shinjansarkar/Auto-Docker/releases/tag/v2.0.0
 [1.5.0]: https://github.com/shinjansarkar/Auto-Docker/releases/tag/v1.5.0
 [1.0.0]: https://github.com/shinjansarkar/Auto-Docker/releases/tag/v1.0.0
-[Unreleased]: https://github.com/shinjansarkar/Auto-Docker/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/shinjansarkar/Auto-Docker/compare/v2.5.1...HEAD

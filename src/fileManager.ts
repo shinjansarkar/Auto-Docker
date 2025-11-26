@@ -591,15 +591,13 @@ export class FileManager {
                 { path: frontendDockerignorePath, content: dockerignore, name: `${projectStructure.frontendPath}/.dockerignore` },
                 { path: backendDockerignorePath, content: dockerignore, name: `${projectStructure.backendPath}/.dockerignore` },
                 { path: dockerComposePath, content: this.generateMonorepoDockerCompose(projectStructure), name: 'docker-compose.yml' },
-            ];
-
-            if (dockerFiles.nginxConf) {
-                filesToWrite.push({ 
+                // ALWAYS generate nginx.conf for monorepos - critical for reverse proxy
+                { 
                     path: nginxConfPath, 
                     content: this.generateMonorepoNginxConf(projectStructure), 
                     name: 'nginx.conf' 
-                });
-            }
+                },
+            ];
 
             // Write all files
             for (const file of filesToWrite) {
