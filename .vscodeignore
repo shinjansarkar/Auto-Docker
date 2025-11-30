@@ -1,6 +1,9 @@
-# Development files
+# ============================================
+# DEVELOPMENT FILES
+# ============================================
 .vscode/**
 .vscode-test/**
+.vscode-test.mjs
 out/**
 node_modules/**
 src/**
@@ -9,30 +12,93 @@ src/**
 .yarnrc
 esbuild.js
 **/tsconfig.json
+**/tsconfig.test.json
 **/eslint.config.mjs
 **/*.map
 **/*.ts
 **/.vscode-test.*
 *.vsix
-.github/**
-package-lock.json
 
-# Test and demo files
+# Git and CI/CD
+.github/**
+.gitattributes
+
+# Package files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ============================================
+# TEST FILES AND ARTIFACTS
+# ============================================
+# Test directories
 .demo-test/**
+.test/**
+test-project/**
+test-projects/**
+test-results/**
+stress-test-projects/**
+stress-test-results/**
+
+# Test scripts
 demo-docker-test.js
 test-extension.js
-test-project/**
+comprehensive-test.js
+integration-test.js
+stress-test.js
+run-all-tests.sh
+run-tests.sh
 
-# Internal documentation (keep README, CHANGELOG, LICENSE)
+# ============================================
+# DOCUMENTATION (Development Only)
+# ============================================
+# Keep only: README.md, CHANGELOG.md, LICENSE
+
+# Internal documentation folder
+docs/**
+
+# Analysis and implementation docs
+Failure-Analysis.md
+IMPLEMENTATION.md
+3-DAY-LAUNCH-PLAN.md
+
+# Test documentation
 TESTING.md
 TESTING-SUMMARY.md
+TEST_SUMMARY.md
+README_TESTING.md
+STRESS_TEST_RESULTS.md
+TEST-GUIDE.md
 FINAL-TEST-REPORT.md
 MONOREPO-TESTING.md
 QUICKSTART-TESTING.md
+
+# Internal summaries
 IMPLEMENTATION-SUMMARY.md
 FAILURE-ANALYSIS.md
 DELIVERABLES.md
 READY-TO-USE.md
-3-DAY-LAUNCH-PLAN.md
+PUBLIC-RELEASE-REPORT.md
+
+# Generic development docs
 CONTRIBUTING.md
 RELEASE.md
+
+# ============================================
+# BUILD ARTIFACTS
+# ============================================
+esbuild.meta.json
+*.log
+coverage/**
+.nyc_output/**
+
+# ============================================
+# MISC
+# ============================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.env
+.env.*
