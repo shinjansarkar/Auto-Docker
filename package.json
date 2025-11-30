@@ -2,7 +2,7 @@
   "name": "auto-docker-extension",
   "displayName": "Auto Docker Extension",
   "description": "AI-powered Docker file generator. Analyzes your project and creates optimized Dockerfile, docker-compose.yml, and nginx.conf files instantly!",
-  "publisher": "auto-docker-publisher",
+  "publisher": "ShinjanSarkar",
   "icon": "images/docker-icon.png",
   "repository": {
     "type": "git",
