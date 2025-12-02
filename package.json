@@ -13,9 +13,9 @@
   },
   "homepage": "https://github.com/auto-docker/auto-docker-extension#readme",
   "license": "MIT",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "engines": {
-    "vscode": "^1.105.0"
+    "vscode": "^1.95.0"
   },
   "categories": [
     "AI",
@@ -162,7 +162,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/sinon": "^17.0.4",
-    "@types/vscode": "^1.105.0",
+    "@types/vscode": "^1.95.0",
     "@typescript-eslint/eslint-plugin": "^8.45.0",
     "@typescript-eslint/parser": "^8.45.0",
     "@vscode/test-cli": "^0.0.11",
