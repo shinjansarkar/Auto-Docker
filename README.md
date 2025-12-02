@@ -19,7 +19,7 @@ An enterprise-grade VS Code extension that automatically generates production-re
 - **🔄 WebSocket Support**: Built-in WebSocket configuration for real-time apps
 - **📊 Advanced Services**: Auto-detects and configures message queues, caching, search engines
 
-## 🎯 What's New in v2.5.0
+## 🎯 What's New in v2.5.2
 
 ### 🚀 Enterprise-Grade Features
 - ✅ **Single-Folder Fullstack Detection**: Detects when frontend and backend coexist in same folder
