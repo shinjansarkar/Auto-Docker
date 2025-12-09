@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { ProjectAnalyzer } from './projectAnalyzer';
+import { EnhancedProjectAnalyzer } from './enhancedProjectAnalyzer';
 import { LLMService } from './llmService';
 import { FileManager } from './fileManager';
 import { DockerTestRunner } from './testRunner';
@@ -87,8 +88,13 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
             progress.report({ increment: 20, message: "Analyzing project structure..." });
             outputChannel.appendLine('📁 Analyzing project structure...');
 
-            const analyzer = new ProjectAnalyzer(getWorkspaceRoot());
-            const projectStructure = await analyzer.analyzeProject();
+            // Use enhanced analyzer for better code understanding
+            const config = vscode.workspace.getConfiguration('autoDocker');
+            const model = config.get<string>('model', 'gpt-4');
+
+            const enhancedAnalyzer = new EnhancedProjectAnalyzer(getWorkspaceRoot(), outputChannel);
+            const analysis = await enhancedAnalyzer.analyzeWithAdvancedFeatures(model);
+            const projectStructure = analysis.projectStructure;
 
             outputChannel.appendLine(`Project type detected: ${projectStructure.projectType}`);
             if (projectStructure.frontend) {

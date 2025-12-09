@@ -15,7 +15,7 @@ export class FileManager {
         const customPath = config.get<string>('dockerOutputPath', '');
         const overwriteFiles = config.get<boolean>('overwriteFiles', false);
 
-        const outputPath = customPath 
+        const outputPath = customPath
             ? path.join(this.workspaceRoot, customPath)
             : this.workspaceRoot;
 
@@ -38,7 +38,7 @@ export class FileManager {
         // Generate comprehensive .env.example based on detected services
         const envExamplePath = path.join(this.workspaceRoot, '.env.example');
         const envExampleUri = vscode.Uri.file(envExamplePath);
-        
+
         try {
             await vscode.workspace.fs.stat(envExampleUri);
             // .env.example already exists, don't overwrite
@@ -55,7 +55,7 @@ export class FileManager {
         for (const file of filesToWrite) {
             const filePath = path.join(outputPath, file.name);
             const fileUri = vscode.Uri.file(filePath);
-            
+
             try {
                 await vscode.workspace.fs.stat(fileUri);
                 existingFiles.push(file.name);
@@ -67,7 +67,7 @@ export class FileManager {
         // Handle existing files
         if (existingFiles.length > 0 && !overwriteFiles) {
             const choice = await this.showOverwriteDialog(existingFiles);
-            
+
             switch (choice) {
                 case 'Overwrite All':
                     break;
@@ -93,7 +93,7 @@ export class FileManager {
         for (const file of files) {
             const filePath = path.join(outputPath, file.name);
             const fileUri = vscode.Uri.file(filePath);
-            
+
             try {
                 await vscode.workspace.fs.writeFile(fileUri, Buffer.from(file.content, 'utf8'));
                 console.log(`Created: ${file.name}`);
@@ -107,7 +107,7 @@ export class FileManager {
     private async showOverwriteDialog(existingFiles: string[]): Promise<string | undefined> {
         const fileList = existingFiles.join(', ');
         const message = `The following Docker files already exist: ${fileList}. What would you like to do?`;
-        
+
         return await vscode.window.showWarningMessage(
             message,
             { modal: true },
@@ -119,7 +119,7 @@ export class FileManager {
 
     private showSuccessMessage(writtenFiles: string[], skippedFiles: string[]): void {
         let message = `Successfully generated Docker files: ${writtenFiles.join(', ')}`;
-        
+
         if (skippedFiles.length > 0) {
             message += `. Skipped existing files: ${skippedFiles.join(', ')}`;
         }
@@ -134,15 +134,15 @@ export class FileManager {
     private async openGeneratedFiles(fileNames: string[]): Promise<void> {
         const config = vscode.workspace.getConfiguration('autoDocker');
         const customPath = config.get<string>('dockerOutputPath', '');
-        
-        const outputPath = customPath 
+
+        const outputPath = customPath
             ? path.join(this.workspaceRoot, customPath)
             : this.workspaceRoot;
 
         for (const fileName of fileNames) {
             const filePath = path.join(outputPath, fileName);
             const fileUri = vscode.Uri.file(filePath);
-            
+
             try {
                 const document = await vscode.workspace.openTextDocument(fileUri);
                 await vscode.window.showTextDocument(document, { preview: false });
@@ -194,7 +194,7 @@ export class FileManager {
         // Databases
         if (projectStructure.databases && projectStructure.databases.length > 0) {
             content += '# Database Configuration\n';
-            
+
             if (projectStructure.databases.includes('postgresql')) {
                 content += '# PostgreSQL\n';
                 content += 'POSTGRES_HOST=postgres\n';
@@ -204,7 +204,7 @@ export class FileManager {
                 content += 'POSTGRES_PASSWORD=changeme\n';
                 content += 'DATABASE_URL=postgresql://postgres:changeme@postgres:5432/myapp_db\n\n';
             }
-            
+
             if (projectStructure.databases.includes('mongodb')) {
                 content += '# MongoDB\n';
                 content += 'MONGO_HOST=mongodb\n';
@@ -214,7 +214,7 @@ export class FileManager {
                 content += 'MONGO_INITDB_ROOT_PASSWORD=changeme\n';
                 content += 'MONGO_URI=mongodb://root:changeme@mongodb:27017/myapp_db?authSource=admin\n\n';
             }
-            
+
             if (projectStructure.databases.includes('mysql')) {
                 content += '# MySQL\n';
                 content += 'MYSQL_HOST=mysql\n';
@@ -283,7 +283,7 @@ export class FileManager {
 
     private getEnvVarComment(varName: string): string {
         const upperName = varName.toUpperCase();
-        
+
         if (upperName.includes('PORT')) return 'Application port';
         if (upperName.includes('DATABASE') || upperName.includes('DB')) {
             if (upperName.includes('URL') || upperName.includes('URI')) return 'Database connection string';
@@ -297,7 +297,7 @@ export class FileManager {
         if (upperName.includes('NODE_ENV')) return 'Environment (development, production, test)';
         if (upperName.includes('JWT')) return 'JWT configuration';
         if (upperName.includes('REDIS')) return 'Redis configuration';
-        
+
         return '';
     }
 
@@ -309,12 +309,12 @@ export class FileManager {
         for (const fileName of filesToBackup) {
             const filePath = path.join(this.workspaceRoot, fileName);
             const fileUri = vscode.Uri.file(filePath);
-            
+
             try {
                 const fileContent = await vscode.workspace.fs.readFile(fileUri);
                 const backupPath = path.join(backupDir, `${fileName}.${timestamp}.backup`);
                 const backupUri = vscode.Uri.file(backupPath);
-                
+
                 await vscode.workspace.fs.writeFile(backupUri, fileContent);
                 console.log(`Backed up: ${fileName}`);
             } catch {
@@ -571,7 +571,7 @@ export class FileManager {
             // Generate frontend Dockerfile
             const frontendDockerfile = this.generateMonorepoFrontendDockerfile(projectStructure);
             const frontendDockerfilePath = path.join(frontendPath, 'Dockerfile');
-            
+
             // Generate backend Dockerfile
             const backendDockerfile = this.generateMonorepoBackendDockerfile(projectStructure);
             const backendDockerfilePath = path.join(backendPath, 'Dockerfile');
@@ -592,17 +592,17 @@ export class FileManager {
                 { path: backendDockerignorePath, content: dockerignore, name: `${projectStructure.backendPath}/.dockerignore` },
                 { path: dockerComposePath, content: this.generateMonorepoDockerCompose(projectStructure), name: 'docker-compose.yml' },
                 // ALWAYS generate nginx.conf for monorepos - critical for reverse proxy
-                { 
-                    path: nginxConfPath, 
-                    content: this.generateMonorepoNginxConf(projectStructure), 
-                    name: 'nginx.conf' 
+                {
+                    path: nginxConfPath,
+                    content: this.generateMonorepoNginxConf(projectStructure),
+                    name: 'nginx.conf'
                 },
             ];
 
             // Write all files
             for (const file of filesToWrite) {
                 const fileUri = vscode.Uri.file(file.path);
-                
+
                 // Check if file exists
                 let exists = false;
                 try {
@@ -643,7 +643,7 @@ export class FileManager {
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json package-lock.json* yarn.lock* pnpm-lock.yaml* ./
 
 # Install dependencies
 RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
@@ -664,7 +664,7 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]`;
     private generateMonorepoBackendDockerfile(projectStructure: ProjectStructure): string {
         // Check if it's Python or Node.js backend
         const isPython = projectStructure.backendDependencies?.requirementsTxt;
-        
+
         if (isPython) {
             return `FROM python:3.11-slim
 WORKDIR /app
@@ -688,7 +688,7 @@ CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "app:app"]`;
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json package-lock.json* yarn.lock* pnpm-lock.yaml* ./
 
 # Install dependencies
 RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
@@ -710,7 +710,7 @@ CMD ["npm", "start"]`;
     private generateMonorepoDockerCompose(projectStructure: ProjectStructure): string {
         const hasEnv = projectStructure.hasEnvFile;
         const backendPort = projectStructure.backendDependencies?.requirementsTxt ? '5000' : '5000';
-        
+
         const dependencies = ['backend'];
         if (projectStructure.databases && projectStructure.databases.length > 0) {
             projectStructure.databases.forEach(db => dependencies.push(db));
@@ -718,7 +718,7 @@ CMD ["npm", "start"]`;
         if (projectStructure.cacheLayer) dependencies.push(projectStructure.cacheLayer);
         if (projectStructure.messageQueue) dependencies.push(projectStructure.messageQueue);
         if (projectStructure.searchEngine) dependencies.push(projectStructure.searchEngine);
-        
+
         let compose = `services:
   frontend:
     build: ./${projectStructure.frontendPath}
@@ -987,60 +987,198 @@ networks:
     }
 
     private generateMonorepoNginxConf(projectStructure: ProjectStructure): string {
-        return `# Upstream servers
+        return `# ============================================================================
+# Production-Ready Nginx Reverse Proxy for Monorepo Full-Stack Application
+# Serves Frontend (React/Vue) + Routes API to Backend (Node.js/Python)
+# ============================================================================
+
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=general:10m rate=50r/s;
+limit_req_zone $binary_remote_addr zone=api:10m rate=100r/s;
+
+# Upstream servers with health checks
 upstream frontend {
-    server frontend:3000;
+    server frontend:3000 max_fails=3 fail_timeout=30s;
+    keepalive 32;
 }
 
 upstream backend {
-    server backend:5000;
+    server backend:5000 max_fails=3 fail_timeout=30s;
+    keepalive 32;
 }
 
 server {
-    listen 80;
-    server_name localhost;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    
+    server_name _;
+    charset utf-8;
+    
+    # Security: Hide server tokens
+    server_tokens off;
+    
+    # ========================================================================
+    # LOGGING CONFIGURATION
+    # ========================================================================
+    access_log /var/log/nginx/access.log combined buffer=32k flush=5s;
+    error_log /var/log/nginx/error.log warn;
+    
+    # ========================================================================
+    # REQUEST LIMITS & TIMEOUTS
+    # ========================================================================
+    client_max_body_size 100m;
+    client_body_timeout 30s;
+    client_header_timeout 30s;
+    keepalive_timeout 65s;
+    send_timeout 30s;
+    
+    # ========================================================================
+    # GZIP COMPRESSION
+    # ========================================================================
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/json 
+               application/javascript application/xml+rss application/atom+xml 
+               image/svg+xml font/truetype font/opentype application/vnd.ms-fontobject 
+               application/font-woff2;
+    
+    # ========================================================================
+    # GLOBAL SECURITY HEADERS
+    # ========================================================================
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()";
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: ws:; frame-ancestors 'self';" always;
+    
+    # ========================================================================
+    # RATE LIMITING
+    # ========================================================================
+    limit_req zone=general burst=100 nodelay;
+    limit_req_status 429;
 
-    # Frontend routes
+    # ========================================================================
+    # FRONTEND APPLICATION ROUTES
+    # ========================================================================
     location / {
+        # Apply rate limiting
+        limit_req zone=general burst=100 nodelay;
+        
         proxy_pass http://frontend;
         proxy_http_version 1.1;
+        
+        # Connection upgrade for WebSocket support
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
+        proxy_set_header Connection "Upgrade";
+        
+        # Client information headers
         proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeouts
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+        
+        # Buffering
+        proxy_buffering on;
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
+        
+        # Cache bypass
+        proxy_cache_bypass $http_upgrade;
     }
 
-    # Backend API routes
+    # ========================================================================
+    # BACKEND API ROUTES
+    # ========================================================================
     location /api/ {
+        # Stricter rate limiting for API
+        limit_req zone=api burst=200 nodelay;
+        
         proxy_pass http://backend/api/;
         proxy_http_version 1.1;
+        
+        # Connection settings
+        proxy_set_header Connection "";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeouts for API
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        # Buffering
+        proxy_buffering on;
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
     }
 
-    # WebSocket support for Socket.io and real-time features
+    # ========================================================================
+    # WEBSOCKET SUPPORT - Socket.io for real-time apps
+    # ========================================================================
     location /socket.io/ {
         proxy_pass http://backend/socket.io/;
         proxy_http_version 1.1;
+        
+        # WebSocket headers
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Disable buffering for WebSocket
+        proxy_buffering off;
+        
+        # Long-lived connection timeouts
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
-
-    # Gzip compression
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css text/xml text/javascript application/json application/javascript application/xml+rss;
+    
+    # ========================================================================
+    # DENY SENSITIVE FILES & DIRECTORIES
+    # ========================================================================
+    location ~ /\\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+    
+    location ~ ~$ {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+    
+    # ========================================================================
+    # HEALTH CHECK ENDPOINT
+    # ========================================================================
+    location /health {
+        access_log off;
+        return 200 "OK";
+        add_header Content-Type text/plain;
+    }
+    
+    # ========================================================================
+    # ERROR PAGES
+    # ========================================================================
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        access_log off;
+    }
 }`;
     }
 
