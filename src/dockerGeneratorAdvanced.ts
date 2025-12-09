@@ -2,742 +2,879 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * Advanced Docker Generation Module
- * Generates production-grade Dockerfiles, docker-compose.yml, and Nginx configs
+ * Advanced Docker Generation Module - Production Grade
+ * Generates optimized multi-stage Dockerfiles with best practices:
+ * - Multi-stage builds for all application types
+ * - Frontend: Build + Nginx serving
+ * - Backend: Build + Runtime optimization
+ * - Nginx: Proxy pass for static files + API
+ * - Security hardening, health checks, non-root users
  */
 
-// ==================== DOCKERFILE GENERATOR ====================
+// ==================== MULTI-STAGE DOCKERFILE GENERATOR ====================
 
 export class DockerfileGenerator {
   /**
-   * Generate production-grade Dockerfile with multi-stage builds
+   * Generate production-grade multi-stage Dockerfile
    */
-  static generateDockerfile(framework: string, config: any): string {
-    const baseDockerfile = this.getBaseDockerfile(framework);
-    const healthCheck = this.generateHealthCheck(framework);
-    const securityHardening = this.generateSecurityHardening();
-
-    return `${baseDockerfile}\n${healthCheck}\n${securityHardening}`;
+  static generateDockerfile(framework: string, config: any = {}): string {
+    const dockerfile = this.getFrameworkDockerfile(framework, config);
+    return dockerfile;
   }
 
-  private static getBaseDockerfile(framework: string): string {
-    switch (framework) {
-      case 'Node.js':
-        return this.generateNodeDockerfile();
-      case 'React':
-      case 'Vue':
-      case 'Angular':
-      case 'Next.js':
-        return this.generateFrontendDockerfile();
-      case 'Django':
-      case 'Flask':
-      case 'FastAPI':
-        return this.generatePythonDockerfile(framework);
-      case 'Spring Boot':
-      case 'Java':
-        return this.generateJavaDockerfile();
-      case 'Go':
-        return this.generateGoDockerfile();
-      case 'PHP':
-      case 'Laravel':
-        return this.generatePHPDockerfile(framework);
-      case '.NET':
-        return this.generateDotNetDockerfile();
-      default:
-        return this.generateNodeDockerfile();
+  private static getFrameworkDockerfile(framework: string, config: any): string {
+    // Frontend frameworks with Nginx
+    if (['React', 'Vue', 'Angular', 'Next.js', 'Svelte', 'Nuxt'].includes(framework)) {
+      return this.generateFrontendMultiStageDockerfile(framework, config);
     }
+
+    // Backend frameworks
+    if (['Node.js', 'Express', 'Nest.js'].includes(framework)) {
+      return this.generateNodeMultiStageDockerfile(config);
+    }
+
+    if (['Django', 'Flask', 'FastAPI'].includes(framework)) {
+      return this.generatePythonMultiStageDockerfile(framework, config);
+    }
+
+    if (['Spring Boot', 'Java'].includes(framework)) {
+      return this.generateJavaMultiStageDockerfile(config);
+    }
+
+    if (framework === 'Go') {
+      return this.generateGoMultiStageDockerfile(config);
+    }
+
+    if (['PHP', 'Laravel'].includes(framework)) {
+      return this.generatePHPMultiStageDockerfile(framework, config);
+    }
+
+    if (framework === '.NET') {
+      return this.generateDotNetMultiStageDockerfile(config);
+    }
+
+    // Default to Node.js
+    return this.generateNodeMultiStageDockerfile(config);
   }
 
-  private static generateNodeDockerfile(): string {
-    return `# Multi-stage Node.js build
-# Stage 1: Build
-FROM node:18-alpine AS builder
+  // ==================== FRONTEND MULTI-STAGE BUILD ====================
+
+  /**
+   * Frontend: Build stage + Nginx serving stage
+   * Optimized for static file serving with security
+   */
+  private static generateFrontendMultiStageDockerfile(framework: string, config: any): string {
+    const buildCommand = this.getFrontendBuildCommand(framework);
+    const nodeVersion = config.nodeVersion || '18';
+
+    return `# ==================== FRONTEND MULTI-STAGE BUILD ====================
+# Stage 1: Build Stage
+# Purpose: Build application and dependencies (large, temporary)
+FROM node:${nodeVersion}-alpine AS builder
 
 WORKDIR /app
 
+# Install build dependencies
+RUN apk add --no-cache python3 make g++
+
 # Copy package files
 COPY package*.json ./
-COPY .npmrc ./ 
+COPY yarn.lock* ./
+COPY pnpm-lock.yaml* ./
 
-# Install dependencies
-RUN npm ci --only=production && \\
-    npm cache clean --force
+# Install dependencies based on package manager
+RUN if [ -f yarn.lock ]; then yarn install --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then npm install -g pnpm && pnpm install --frozen-lockfile; \\
+    else npm ci --prefer-offline --no-audit; fi
 
 # Copy source code
 COPY . .
 
-# Build application
-RUN npm run build
+# Set build environment
+ENV NODE_ENV=production
+ENV CI=true
 
-# Stage 2: Runtime
-FROM node:18-alpine
+# Build application
+RUN ${buildCommand}
+
+# ==================== STAGE 2: RUNTIME STAGE ====================
+# Purpose: Serve built application with Nginx (small, optimized)
+FROM nginx:alpine
+
+WORKDIR /usr/share/nginx/html
+
+# Remove default nginx config
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copy custom nginx configuration (optimized for SPA)
+COPY nginx-frontend.conf /etc/nginx/conf.d/frontend.conf
+
+# Create non-root user
+RUN addgroup -g 101 -S nginx && \\
+    adduser -S nginx -u 101 -G nginx || true
+
+# Copy built application from builder
+COPY --from=builder --chown=nginx:nginx /app/dist . 
+COPY --from=builder --chown=nginx:nginx /app/build . 
+COPY --from=builder --chown=nginx:nginx /app/out .
+
+# Set proper permissions
+RUN chmod -R 755 /usr/share/nginx/html && \\
+    chmod -R 755 /etc/nginx
+
+# Switch to non-root user
+USER nginx
+
+# Expose port
+EXPOSE 80
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\
+  CMD wget --quiet --tries=1 --spider http://localhost/health || exit 1
+
+# Start Nginx
+CMD ["nginx", "-g", "daemon off;"]`;
+  }
+
+  /**
+   * Frontend build commands per framework
+   */
+  private static getFrontendBuildCommand(framework: string): string {
+    const commands: { [key: string]: string } = {
+      'React': 'npm run build || yarn build || pnpm build',
+      'Vue': 'npm run build || yarn build || pnpm build',
+      'Angular': 'npm run build -- --configuration production || yarn build --configuration production',
+      'Next.js': 'npm run build || yarn build || pnpm build',
+      'Svelte': 'npm run build || yarn build || pnpm build',
+      'Nuxt': 'npm run build || yarn build || pnpm build'
+    };
+    return commands[framework] || 'npm run build || yarn build || pnpm build';
+  }
+
+  // ==================== BACKEND MULTI-STAGE BUILD ====================
+
+  /**
+   * Node.js Backend: Multi-stage build
+   * Stage 1: Build + Install dependencies
+   * Stage 2: Runtime (minimal dependencies)
+   */
+  private static generateNodeMultiStageDockerfile(config: any): string {
+    const nodeVersion = config.nodeVersion || '18';
+    const buildCommand = config.buildCommand || 'npm run build || echo "No build script"';
+    const startCommand = config.startCommand || 'node dist/index.js';
+
+    return `# ==================== NODE.JS BACKEND MULTI-STAGE BUILD ====================
+# Stage 1: Dependencies and Build Stage
+# Purpose: Install all dependencies and build application
+FROM node:${nodeVersion}-alpine AS builder
 
 WORKDIR /app
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \\
-    adduser -S nodejs -u 1001
+# Install build tools
+RUN apk add --no-cache python3 make g++
 
-# Copy built application from builder
-COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
-COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
+# Copy package files first (leverage layer caching)
+COPY package*.json ./
+COPY yarn.lock* ./
+COPY pnpm-lock.yaml* ./
+COPY .npmrc* ./
+
+# Install all dependencies (including dev)
+RUN if [ -f yarn.lock ]; then yarn install; \\
+    elif [ -f pnpm-lock.yaml ]; then npm install -g pnpm && pnpm install; \\
+    else npm ci --prefer-offline --no-audit; fi
+
+# Copy source code
+COPY . .
 
 # Set environment
 ENV NODE_ENV=production
 
-# Switch to non-root user
-USER nodejs
+# Build application (TypeScript compilation, etc.)
+RUN ${buildCommand}
 
-# Expose port
-EXPOSE 3000
-
-# Start application
-CMD ["node", "dist/index.js"]`;
-  }
-
-  private static generateFrontendDockerfile(): string {
-    return `# Multi-stage Frontend build
-# Stage 1: Build
-FROM node:18-alpine AS builder
+# ==================== STAGE 2: DEPENDENCIES LAYER ====================
+# Purpose: Install only production dependencies (smaller layer)
+FROM node:${nodeVersion}-alpine AS dependencies
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY yarn.lock* ./
+COPY pnpm-lock.yaml* ./
+COPY .npmrc* ./
 
-# Install dependencies
-RUN npm ci
+# Install production dependencies only
+RUN if [ -f yarn.lock ]; then yarn install --production --frozen-lockfile; \\
+    elif [ -f pnpm-lock.yaml ]; then npm install -g pnpm && pnpm install --prod --frozen-lockfile; \\
+    else npm ci --prefer-offline --no-audit --only=production; fi
 
-# Copy source
-COPY . .
-
-# Build application
-RUN npm run build
-
-# Stage 2: Serve with Nginx
-FROM nginx:alpine
-
-# Copy Nginx config
-COPY nginx.conf /etc/nginx/nginx.conf
-COPY default.conf /etc/nginx/conf.d/default.conf
-
-# Copy built app from builder
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-# Create non-root user
-RUN addgroup -g 101 -S nginx && \\
-    adduser -S nginx -u 101
-
-USER nginx
-
-EXPOSE 80
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\
-  CMD wget --quiet --tries=1 --spider http://localhost/health || exit 1`;
-  }
-
-  private static generatePythonDockerfile(framework: string): string {
-    const startCommand = this.getPythonStartCommand(framework);
-    
-    return `# Python application
-FROM python:3.11-slim
+# ==================== STAGE 3: RUNTIME STAGE ====================
+# Purpose: Final optimized image for production
+FROM node:${nodeVersion}-alpine
 
 WORKDIR /app
 
-# Create non-root user
-RUN groupadd -r python && useradd -r -g python python
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \\
+    adduser -S nodejs -u 1001 -G nodejs
 
-# Install system dependencies
+# Install dumb-init for proper signal handling
+RUN apk add --no-cache dumb-init
+
+# Copy production dependencies from dependencies stage
+COPY --from=dependencies /app/node_modules ./node_modules
+
+# Copy package files
+COPY --chown=nodejs:nodejs package*.json ./
+
+# Copy built application from builder stage
+COPY --chown=nodejs:nodejs --from=builder /app/dist ./dist
+COPY --chown=nodejs:nodejs --from=builder /app/build ./build
+COPY --chown=nodejs:nodejs --from=builder /app/src ./src
+
+# Set environment
+ENV NODE_ENV=production
+ENV NODE_OPTIONS="--max-old-space-size=512"
+
+# Switch to non-root user
+USER nodejs
+
+# Expose application port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})" || exit 1
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start application
+CMD ["${startCommand}"]`;
+  }
+
+  // ==================== PYTHON BACKEND MULTI-STAGE BUILD ====================
+
+  /**
+   * Python Backend: Multi-stage build
+   * Stage 1: Build dependencies
+   * Stage 2: Runtime
+   */
+  private static generatePythonMultiStageDockerfile(framework: string, config: any): string {
+    const pythonVersion = config.pythonVersion || '3.11';
+    const startCommand = this.getPythonStartCommand(framework);
+
+    return `# ==================== PYTHON BACKEND MULTI-STAGE BUILD ====================
+# Stage 1: Builder Stage
+# Purpose: Install dependencies and build wheels
+FROM python:${pythonVersion}-slim AS builder
+
+WORKDIR /app
+
+# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \\
+    build-essential \\
+    libpq-dev \\
     gcc \\
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
 COPY requirements*.txt ./
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Create wheels directory
+RUN mkdir -p /wheels
 
-# Copy application
+# Install dependencies and create wheels
+RUN pip install --user --no-cache-dir wheel && \\
+    pip wheel --user --no-cache-dir --no-deps --wheel-dir /wheels -r requirements.txt
+
+# ==================== STAGE 2: RUNTIME STAGE ====================
+# Purpose: Minimal production image
+FROM python:${pythonVersion}-slim
+
+WORKDIR /app
+
+# Install only runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    libpq5 \\
+    curl \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -r python && useradd -r -g python python
+
+# Copy wheels from builder
+COPY --from=builder /wheels /wheels
+
+# Copy requirements
+COPY requirements*.txt ./
+
+# Install wheels (production dependencies)
+RUN pip install --no-cache-dir /wheels/* && \\
+    rm -rf /wheels
+
+# Copy application code
 COPY --chown=python:python . .
 
+# Set Python environment
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Switch to non-root user
 USER python
 
+# Expose port
 EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
-  CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+  CMD curl -f http://localhost:8000/health || exit 1
 
+# Start application
 CMD ["${startCommand}"]`;
   }
 
-  private static generateJavaDockerfile(): string {
-    return `# Multi-stage Java build
-# Stage 1: Build
-FROM maven:3.8.1-openjdk-17 AS builder
+  private static getPythonStartCommand(framework: string): string {
+    const commands: { [key: string]: string } = {
+      'Django': 'gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --worker-class sync',
+      'Flask': 'gunicorn app:app --bind 0.0.0.0:8000 --workers 4 --worker-class sync',
+      'FastAPI': 'uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4'
+    };
+    return commands[framework] || 'python app.py';
+  }
+
+  // ==================== JAVA BACKEND MULTI-STAGE BUILD ====================
+
+  /**
+   * Java/Spring Boot: Multi-stage build
+   * Stage 1: Build with Maven/Gradle
+   * Stage 2: Runtime with JRE
+   */
+  private static generateJavaMultiStageDockerfile(config: any): string {
+    const javaVersion = config.javaVersion || '17';
+    const buildTool = config.buildTool || 'maven';
+
+    if (buildTool.toLowerCase() === 'gradle') {
+      return this.generateJavaGradleDockerfile(javaVersion);
+    }
+
+    return `# ==================== JAVA MULTI-STAGE BUILD ====================
+# Stage 1: Build Stage
+# Purpose: Compile and package application
+FROM maven:3.9-eclipse-temurin-${javaVersion} AS builder
 
 WORKDIR /app
 
+# Copy Maven configuration
+COPY pom.xml mvnw* mvnw.cmd* ./
+
+# Copy source code
 COPY . .
 
-# Build with Maven
-RUN mvn clean package -DskipTests
+# Build application (skip tests for speed)
+RUN mvn clean package -DskipTests -q
 
-# Stage 2: Runtime
-FROM openjdk:17-jdk-slim
+# ==================== STAGE 2: RUNTIME STAGE ====================
+# Purpose: Minimal Java runtime
+FROM eclipse-temurin:${javaVersion}-jre-alpine
 
 WORKDIR /app
 
-# Create non-root user
-RUN groupadd -r java && useradd -r -g java java
+# Install curl for health checks
+RUN apk add --no-cache curl
 
-# Copy JAR from builder
+# Create non-root user
+RUN addgroup -g 1001 -S java && \\
+    adduser -S java -u 1001 -G java
+
+# Copy built JAR from builder
 COPY --from=builder /app/target/*.jar app.jar
+
+# Extract layers for faster startup (optional, only for Spring Boot 2.3+)
+RUN jar xf app.jar BOOT-INF/lib && \\
+    mkdir -p app && \\
+    (cd app && jar xf ../app.jar)
+
+# Set environment
+ENV JAVA_OPTS="-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=35.0"
+
+# Switch to non-root user
+USER java
+
+# Expose application port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \\
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
+
+# Start application
+ENTRYPOINT ["java", "-jar", "app.jar"]`;
+  }
+
+  private static generateJavaGradleDockerfile(javaVersion: string): string {
+    return `# ==================== JAVA GRADLE MULTI-STAGE BUILD ====================
+# Stage 1: Build Stage
+FROM eclipse-temurin:${javaVersion}-jdk-alpine AS builder
+
+WORKDIR /app
+
+# Install gradle
+RUN apk add --no-cache gradle
+
+# Copy gradle configuration
+COPY gradlew* build.gradle settings.gradle* ./
+COPY gradle ./gradle
+
+# Copy source code
+COPY . .
+
+# Build application
+RUN gradle build -x test --no-daemon
+
+# ==================== STAGE 2: RUNTIME STAGE ====================
+FROM eclipse-temurin:${javaVersion}-jre-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache curl
+
+# Create non-root user
+RUN addgroup -g 1001 -S java && \\
+    adduser -S java -u 1001 -G java
+
+# Copy built JAR
+COPY --from=builder /app/build/libs/*.jar app.jar
 
 USER java
 
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
-  CMD curl -f http://localhost:8080/actuator/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \\
+  CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["java", "-jar", "app.jar"]`;
   }
 
-  private static generateGoDockerfile(): string {
-    return `# Multi-stage Go build
-# Stage 1: Build
-FROM golang:1.21-alpine AS builder
+  // ==================== GO BACKEND MULTI-STAGE BUILD ====================
+
+  /**
+   * Go: Ultra-minimal multi-stage build
+   * Stage 1: Build with full Go toolchain
+   * Stage 2: Runtime with scratch or Alpine
+   */
+  private static generateGoMultiStageDockerfile(config: any): string {
+    const goVersion = config.goVersion || '1.21';
+
+    return `# ==================== GO MULTI-STAGE BUILD ====================
+# Stage 1: Build Stage
+# Purpose: Compile Go binary
+FROM golang:${goVersion}-alpine AS builder
 
 WORKDIR /app
 
-COPY go.* ./
-RUN go mod download
+# Install build dependencies
+RUN apk add --no-cache git make
 
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download -x
+
+# Copy source code
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -o app .
+# Build application
+# CGO_ENABLED=0 creates a static binary that works in scratch container
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \\
+    go build -ldflags="-w -s" -o app .
 
-# Stage 2: Runtime
-FROM alpine:latest
+# ==================== STAGE 2: SCRATCH RUNTIME ====================
+# Purpose: Ultra-minimal final image (no OS, no shell)
+FROM scratch
 
 WORKDIR /app
 
-# Create non-root user
-RUN addgroup -g 1001 -S app && \\
-    adduser -S app -u 1001
-
+# Copy only the binary from builder (no other files)
 COPY --from=builder /app/app .
 
-USER app
-
+# Expose port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\
-  CMD wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
-
-CMD ["./app"]`;
+# Start application
+ENTRYPOINT ["./app"]`;
   }
 
-  private static generatePHPDockerfile(framework: string): string {
-    return `# PHP application
-FROM php:8.2-fpm-alpine
+  // ==================== PHP MULTI-STAGE BUILD ====================
+
+  /**
+   * PHP: Multi-stage with PHP-FPM and Composer
+   */
+  private static generatePHPMultiStageDockerfile(framework: string, config: any): string {
+    const phpVersion = config.phpVersion || '8.2';
+
+    return `# ==================== PHP MULTI-STAGE BUILD ====================
+# Stage 1: Builder Stage
+# Purpose: Install dependencies with Composer
+FROM php:${phpVersion}-fpm-alpine AS builder
 
 WORKDIR /app
 
-# Install extensions
-RUN docker-php-ext-install pdo pdo_mysql
+# Install required extensions
+RUN docker-php-ext-install pdo pdo_mysql opcache
 
-# Copy composer
+# Install composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Copy composer files
+COPY composer.json composer.lock* ./
+
+# Install dependencies
+RUN composer install --no-dev --optimize-autoloader --no-scripts
+
+# ==================== STAGE 2: RUNTIME STAGE ====================
+FROM php:${phpVersion}-fpm-alpine
+
+WORKDIR /app
+
+# Install production extensions
+RUN docker-php-ext-install pdo pdo_mysql opcache
+
+# Install runtime dependencies
+RUN apk add --no-cache curl
 
 # Create non-root user
 RUN addgroup -g 1001 -S www && \\
-    adduser -S www -u 1001
+    adduser -S www -u 1001 -G www
 
-# Copy application
+# Copy dependencies from builder
+COPY --from=builder /app/vendor ./vendor
+
+# Copy application code
 COPY --chown=www:www . .
 
-# Install dependencies
-RUN composer install --no-dev --optimize-autoloader
+# Configure PHP
+COPY php.ini /usr/local/etc/php/
+RUN sed -i 's/www-data/www/g' /usr/local/etc/php-fpm.conf
 
+# Switch to non-root user
 USER www
 
+# Expose FPM port
 EXPOSE 9000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
+  CMD curl -f http://localhost:9000/health || exit 1
 
 CMD ["php-fpm"]`;
   }
 
-  private static generateDotNetDockerfile(): string {
-    return `# Multi-stage .NET build
-# Stage 1: Build
-FROM mcr.microsoft.com/dotnet/sdk:7.0 AS builder
+  // ==================== .NET MULTI-STAGE BUILD ====================
+
+  /**
+   * .NET: Multi-stage build with SDK and Runtime
+   */
+  private static generateDotNetMultiStageDockerfile(config: any): string {
+    const dotnetVersion = config.dotnetVersion || '7.0';
+
+    return `# ==================== .NET MULTI-STAGE BUILD ====================
+# Stage 1: Build Stage
+# Purpose: Build and publish application
+FROM mcr.microsoft.com/dotnet/sdk:${dotnetVersion} AS builder
 
 WORKDIR /app
 
+# Copy project files
 COPY . .
 
-RUN dotnet restore && \\
-    dotnet publish -c Release -o out
+# Restore dependencies
+RUN dotnet restore -q
 
-# Stage 2: Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:7.0
+# Build and publish
+RUN dotnet publish -c Release -o /publish --no-restore -q
+
+# ==================== STAGE 2: RUNTIME STAGE ====================
+FROM mcr.microsoft.com/dotnet/aspnet:${dotnetVersion}
 
 WORKDIR /app
 
-COPY --from=builder /app/out .
+# Install curl for health checks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user
+RUN groupadd -r dotnet && useradd -r -g dotnet dotnet
+
+# Copy published application from builder
+COPY --from=builder --chown=dotnet:dotnet /publish .
+
+# Switch to non-root user
+USER dotnet
+
+# Expose port
 EXPOSE 80
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \\
   CMD curl -f http://localhost/health || exit 1
 
+# Start application
 ENTRYPOINT ["dotnet", "app.dll"]`;
-  }
-
-  private static generateHealthCheck(framework: string): string {
-    // Already included in framework-specific generators
-    return '';
-  }
-
-  private static generateSecurityHardening(): string {
-    return `
-# Security best practices
-# - Non-root user (handled above)
-# - Read-only filesystem where possible
-# - Resource limits (handle via docker-compose)
-# - No package managers in production image`;
-  }
-
-  private static getPythonStartCommand(framework: string): string {
-    switch (framework) {
-      case 'Django':
-        return 'gunicorn config.wsgi --bind 0.0.0.0:8000';
-      case 'Flask':
-        return 'gunicorn app:app --bind 0.0.0.0:8000';
-      case 'FastAPI':
-        return 'uvicorn main:app --host 0.0.0.0 --port 8000';
-      default:
-        return 'python app.py';
-    }
   }
 }
 
 // ==================== DOCKER-COMPOSE GENERATOR ====================
 
 export class DockerComposeGenerator {
-  static generateDockerCompose(services: any[], databases: any[], queues: any[], cacheLayer: any): string {
-    const compose = {
-      version: '3.9',
-      services: this.generateServices(services, databases, queues, cacheLayer),
-      networks: this.generateNetworks(),
-      volumes: this.generateVolumes(databases),
-      configs: this.generateConfigs()
-    };
+  /**
+   * Generate production-grade docker-compose.yml
+   */
+  static generateDockerCompose(services: any[] = [], databases: any[] = [], queues: any[] = []): string {
+    return `version: '3.9'
 
-    return this.formatYaml(compose);
-  }
+services:
+  # ==================== FRONTEND SERVICE ====================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: app_frontend
+    ports:
+      - "3000:80"
+    environment:
+      - NODE_ENV=production
+      - REACT_APP_API_URL=http://localhost/api
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
-  private static generateServices(services: any[], databases: any[], queues: any[], cache: any): any {
-    const servicesObj: any = {};
+  # ==================== BACKEND SERVICE ====================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: app_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_ENV=production
+      - PORT=8000
+      - DATABASE_URL=postgresql://user:password@postgres:5432/app_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
-    // Add application services
-    for (const service of services) {
-      servicesObj[service.name] = {
-        build: {
-          context: service.context || '.',
-          dockerfile: 'Dockerfile'
-        },
-        container_name: `app_${service.name}`,
-        ports: [`${service.port}:${service.port}`],
-        environment: this.generateEnvironment(service),
-        depends_on: this.generateDependsOn(databases, queues, cache),
-        networks: ['app-network'],
-        healthcheck: {
-          test: ['CMD', 'curl', '-f', `http://localhost:${service.port}/health`],
-          interval: '30s',
-          timeout: '10s',
-          retries: 3,
-          start_period: '10s'
-        },
-        restart: 'unless-stopped',
-        volumes: this.generateServiceVolumes(service),
-        resources: {
-          limits: {
-            cpus: '1.0',
-            memory: '512M'
-          }
-        }
-      };
-    }
+  # ==================== NGINX REVERSE PROXY ====================
+  nginx:
+    image: nginx:alpine
+    container_name: app_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-    // Add database services
-    for (const db of databases) {
-      servicesObj[db.name || db.type.toLowerCase()] = this.generateDatabaseService(db);
-    }
+  # ==================== POSTGRESQL DATABASE ====================
+  postgres:
+    image: postgres:15-alpine
+    container_name: app_postgres
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=app_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-    // Add queue services
-    for (const queue of queues) {
-      servicesObj[queue.name || queue.type.toLowerCase()] = this.generateQueueService(queue);
-    }
+  # ==================== REDIS CACHE ====================
+  redis:
+    image: redis:7-alpine
+    container_name: app_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-    // Add cache service
-    if (cache) {
-      servicesObj.redis = this.generateCacheService(cache);
-    }
+networks:
+  app-network:
+    driver: bridge
 
-    return servicesObj;
-  }
-
-  private static generateDatabaseService(db: any): any {
-    const services: any = {
-      postgres: {
-        image: 'postgres:15-alpine',
-        container_name: 'app_postgres',
-        environment: {
-          POSTGRES_USER: 'postgres',
-          POSTGRES_PASSWORD: 'postgres',
-          POSTGRES_DB: 'app_db'
-        },
-        ports: ['5432:5432'],
-        volumes: ['postgres_data:/var/lib/postgresql/data'],
-        networks: ['app-network'],
-        healthcheck: {
-          test: ['CMD-SHELL', 'pg_isready -U postgres'],
-          interval: '10s',
-          timeout: '5s',
-          retries: 5
-        }
-      },
-      mysql: {
-        image: 'mysql:8.0',
-        container_name: 'app_mysql',
-        environment: {
-          MYSQL_ROOT_PASSWORD: 'root',
-          MYSQL_DATABASE: 'app_db'
-        },
-        ports: ['3306:3306'],
-        volumes: ['mysql_data:/var/lib/mysql'],
-        networks: ['app-network'],
-        healthcheck: {
-          test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost'],
-          interval: '10s',
-          timeout: '5s',
-          retries: 5
-        }
-      },
-      mongodb: {
-        image: 'mongo:6.0',
-        container_name: 'app_mongo',
-        environment: {
-          MONGO_INITDB_ROOT_USERNAME: 'root',
-          MONGO_INITDB_ROOT_PASSWORD: 'root'
-        },
-        ports: ['27017:27017'],
-        volumes: ['mongodb_data:/data/db'],
-        networks: ['app-network'],
-        healthcheck: {
-          test: ['CMD', 'mongo', '--eval', 'db.adminCommand("ping")'],
-          interval: '10s',
-          timeout: '5s',
-          retries: 5
-        }
-      }
-    };
-
-    return services[db.type.toLowerCase()] || services.postgres;
-  }
-
-  private static generateQueueService(queue: any): any {
-    const services: any = {
-      rabbitmq: {
-        image: 'rabbitmq:3.12-management-alpine',
-        container_name: 'app_rabbitmq',
-        environment: {
-          RABBITMQ_DEFAULT_USER: 'guest',
-          RABBITMQ_DEFAULT_PASS: 'guest'
-        },
-        ports: ['5672:5672', '15672:15672'],
-        volumes: ['rabbitmq_data:/var/lib/rabbitmq'],
-        networks: ['app-network'],
-        healthcheck: {
-          test: ['CMD', 'rabbitmq-diagnostics', 'ping'],
-          interval: '10s',
-          timeout: '5s',
-          retries: 5
-        }
-      },
-      kafka: {
-        image: 'confluentinc/cp-kafka:7.0.0',
-        container_name: 'app_kafka',
-        environment: {
-          KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181',
-          KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092',
-          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-        },
-        ports: ['9092:9092'],
-        networks: ['app-network']
-      }
-    };
-
-    return services[queue.type.toLowerCase()] || services.rabbitmq;
-  }
-
-  private static generateCacheService(cache: any): any {
-    return {
-      image: 'redis:7-alpine',
-      container_name: 'app_redis',
-      ports: ['6379:6379'],
-      volumes: ['redis_data:/data'],
-      networks: ['app-network'],
-      healthcheck: {
-        test: ['CMD', 'redis-cli', 'ping'],
-        interval: '10s',
-        timeout: '5s',
-        retries: 5
-      },
-      command: 'redis-server --appendonly yes'
-    };
-  }
-
-  private static generateEnvironment(service: any): any {
-    return {
-      NODE_ENV: 'production',
-      PORT: service.port,
-      LOG_LEVEL: 'info'
-    };
-  }
-
-  private static generateDependsOn(databases: any[], queues: any[], cache: any): any {
-    const depends: any = {};
-
-    for (const db of databases) {
-      const dbName = db.name || db.type.toLowerCase();
-      depends[dbName] = {
-        condition: 'service_healthy'
-      };
-    }
-
-    return depends;
-  }
-
-  private static generateServiceVolumes(service: any): string[] {
-    return [];
-  }
-
-  private static generateNetworks(): any {
-    return {
-      'app-network': {
-        driver: 'bridge'
-      }
-    };
-  }
-
-  private static generateVolumes(databases: any[]): any {
-    const volumes: any = {};
-
-    for (const db of databases) {
-      const dbName = db.name || db.type.toLowerCase();
-      volumes[`${dbName}_data`] = {
-        driver: 'local'
-      };
-    }
-
-    volumes.redis_data = { driver: 'local' };
-    volumes.rabbitmq_data = { driver: 'local' };
-
-    return volumes;
-  }
-
-  private static generateConfigs(): any {
-    return {};
-  }
-
-  private static formatYaml(obj: any): string {
-    let yaml = 'version: \'3.9\'\n\n';
-
-    yaml += 'services:\n';
-    for (const [name, service] of Object.entries(obj.services)) {
-      yaml += this.formatServiceYaml(name, service as any);
-    }
-
-    yaml += '\nnetworks:\n';
-    for (const [name, network] of Object.entries(obj.networks)) {
-      yaml += `  ${name}:\n`;
-      yaml += `    driver: ${(network as any).driver}\n`;
-    }
-
-    yaml += '\nvolumes:\n';
-    for (const name of Object.keys(obj.volumes)) {
-      yaml += `  ${name}:\n`;
-      yaml += `    driver: local\n`;
-    }
-
-    return yaml;
-  }
-
-  private static formatServiceYaml(name: string, service: any): string {
-    let yaml = `  ${name}:\n`;
-    yaml += `    image: ${service.image || 'node:18'}\n`;
-    yaml += `    container_name: ${service.container_name}\n`;
-
-    if (service.build) {
-      yaml += `    build:\n`;
-      yaml += `      context: ${service.build.context}\n`;
-      yaml += `      dockerfile: ${service.build.dockerfile}\n`;
-    }
-
-    if (service.ports && service.ports.length > 0) {
-      yaml += `    ports:\n`;
-      for (const port of service.ports) {
-        yaml += `      - "${port}"\n`;
-      }
-    }
-
-    if (service.environment) {
-      yaml += `    environment:\n`;
-      for (const [key, value] of Object.entries(service.environment)) {
-        yaml += `      ${key}: ${value}\n`;
-      }
-    }
-
-    if (service.volumes && service.volumes.length > 0) {
-      yaml += `    volumes:\n`;
-      for (const volume of service.volumes) {
-        yaml += `      - ${volume}\n`;
-      }
-    }
-
-    yaml += `    networks:\n`;
-    for (const net of service.networks || []) {
-      yaml += `      - ${net}\n`;
-    }
-
-    yaml += `    healthcheck:\n`;
-    yaml += `      test: ${JSON.stringify(service.healthcheck.test)}\n`;
-    yaml += `      interval: ${service.healthcheck.interval}\n`;
-    yaml += `      timeout: ${service.healthcheck.timeout}\n`;
-    yaml += `      retries: ${service.healthcheck.retries}\n`;
-    yaml += `      start_period: ${service.healthcheck.start_period}\n`;
-
-    yaml += `    restart: ${service.restart}\n`;
-
-    if (service.depends_on && Object.keys(service.depends_on).length > 0) {
-      yaml += `    depends_on:\n`;
-      for (const [dep, config] of Object.entries(service.depends_on)) {
-        yaml += `      ${dep}:\n`;
-        yaml += `        condition: ${(config as any).condition}\n`;
-      }
-    }
-
-    return yaml;
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  nginx_cache:
+    driver: local`;
   }
 }
 
-// ==================== NGINX CONFIGURATION GENERATOR ====================
+// ==================== NGINX REVERSE PROXY GENERATOR ====================
 
 export class NginxConfigGenerator {
-  static generateNginxConfig(services: any[], reverseProxy: any): string {
-    return `upstream frontend {
-  server ${services[0]?.name || 'frontend'}:${services[0]?.port || 3000};
+  /**
+   * Generate Nginx configuration for:
+   * 1. Serving static frontend files
+   * 2. Proxying backend API requests
+   * 3. Security headers
+   * 4. Caching strategies
+   * 5. Gzip compression
+   */
+  static generateNginxConfig(frontendPort: number = 3000, backendPort: number = 8000, staticPath: string = '/dist'): string {
+    return `server {
+    listen 80;
+
+    # Serve frontend build
+    location / {
+        try_files $uri $uri/ /index.html;
+        root /usr/share/nginx/html;
+    }
+
+    # Backend reverse proxy
+    location /api/ {
+        proxy_pass http://backend:${backendPort}/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}`;
+  }
+
+  /**
+   * Generate Nginx frontend-only configuration (SPA serving)
+   */
+  static generateNginxFrontendConfig(): string {
+    return `# ==================== NGINX SPA CONFIGURATION ====================
+# Optimized for Single Page Applications (React, Vue, Angular)
+
+upstream frontend {
+  server frontend:3000;
 }
 
-upstream backend {
-  server ${services[1]?.name || 'backend'}:${services[1]?.port || 8000};
-}
+# Cache paths
+proxy_cache_path /var/cache/nginx/static levels=1:2 keys_zone=static_cache:10m max_size=1g inactive=30d use_temp_path=off;
+proxy_cache_path /var/cache/nginx/assets levels=1:2 keys_zone=assets_cache:10m max_size=500m inactive=7d use_temp_path=off;
 
-# Rate limiting
-limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
-limit_req_zone $binary_remote_addr zone=web_limit:10m rate=30r/s;
+# Gzip compression
+gzip on;
+gzip_vary on;
+gzip_min_length 1024;
+gzip_types text/plain text/css text/xml text/javascript 
+           application/x-javascript application/xml+rss 
+           application/javascript application/json;
 
 server {
-  listen 80;
+  listen 80 default_server;
+  listen [::]:80 default_server;
+  
   server_name _;
   client_max_body_size 100M;
 
-  # Security headers
-  add_header X-Frame-Options "SAMEORIGIN" always;
+  # ==================== SECURITY HEADERS ====================
   add_header X-Content-Type-Options "nosniff" always;
+  add_header X-Frame-Options "SAMEORIGIN" always;
   add_header X-XSS-Protection "1; mode=block" always;
   add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-  add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+  add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self' https:; frame-ancestors 'none'" always;
 
-  # Frontend
+  # ==================== SPA ROUTING ====================
   location / {
-    limit_req zone=web_limit burst=20 nodelay;
-    
     proxy_pass http://frontend;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection 'upgrade';
     proxy_set_header Host $host;
-    proxy_cache_bypass $http_upgrade;
-    
-    # CORS
-    add_header 'Access-Control-Allow-Origin' '$http_origin' always;
-    add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
-    add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range' always;
-    
-    if ($request_method = 'OPTIONS') {
-      return 204;
-    }
-  }
-
-  # Backend API
-  location /api/ {
-    limit_req zone=api_limit burst=10 nodelay;
-    
-    proxy_pass http://backend/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_cache_bypass $http_upgrade;
     
-    # Timeouts
-    proxy_connect_timeout 60s;
-    proxy_send_timeout 60s;
-    proxy_read_timeout 60s;
+    # For SPA: Try file, then fall back to index.html
+    error_page 404 =200 /index.html;
   }
 
-  # Health check
+  # ==================== ASSET CACHING ====================
+  location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+    proxy_pass http://frontend;
+    proxy_cache assets_cache;
+    proxy_cache_valid 200 30d;
+    add_header Cache-Control "public, immutable, max-age=31536000";
+    add_header X-Cache-Status $upstream_cache_status;
+  }
+
+  # ==================== HEALTH CHECK ====================
   location /health {
     access_log off;
     return 200 "healthy\\n";
     add_header Content-Type text/plain;
   }
-
-  # Gzip compression
-  gzip on;
-  gzip_vary on;
-  gzip_min_length 1000;
-  gzip_types text/plain text/css text/xml text/javascript 
-             application/x-javascript application/xml+rss 
-             application/javascript application/json;
 }`;
   }
 }
 
-// ==================== MAIN GENERATOR CLASS ====================
+// ==================== MAIN EXPORT ====================
 
-export class DockerGeneratorFinal {
-  static async generateAll(projectPath: string, config: any): Promise<any> {
-    return {
-      dockerfile: DockerfileGenerator.generateDockerfile(config.framework, config),
-      dockerCompose: DockerComposeGenerator.generateDockerCompose(
-        config.services || [],
-        config.databases || [],
-        config.messageQueues || [],
-        config.cacheLayer
-      ),
-      nginx: NginxConfigGenerator.generateNginxConfig(config.services, config.reverseProxy)
-    };
+export class DockerGenerator {
+  static generateDockerfile(framework: string, config: any = {}): string {
+    return DockerfileGenerator.generateDockerfile(framework, config);
+  }
+
+  static generateNginxConfig(frontendPort: number = 3000, backendPort: number = 8000): string {
+    return NginxConfigGenerator.generateNginxConfig(frontendPort, backendPort);
+  }
+
+  static generateDockerCompose(services: any[] = [], databases: any[] = [], queues: any[] = []): string {
+    return DockerComposeGenerator.generateDockerCompose(services, databases, queues);
   }
 }
 
-export default DockerGeneratorFinal;
+export default DockerGenerator;
