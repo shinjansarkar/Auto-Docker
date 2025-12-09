@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { SafeFileReader, ErrorRecovery } from './safeFileReader';
 
 /**
  * Deep File Scanner - Finds dependency files anywhere in project structure
@@ -45,14 +46,27 @@ export class DeepFileScanner {
     }
 
     /**
-     * Read file content from absolute path
+     * Read file content from absolute path with safe error handling
      */
     async readFile(filePath: string): Promise<string | null> {
         try {
-            const content = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
-            return content.toString();
+            // PRODUCTION-GRADE: Use safe file reader with retry logic
+            const content = await SafeFileReader.readFileWithRetry(filePath, {
+                maxRetries: 3,
+                retryDelay: 100,
+                timeout: 5000,
+                logErrors: true
+            });
+
+            if (!content) {
+                console.warn(`Could not read file ${filePath}`);
+                return null;
+            }
+
+            return content;
         } catch (error) {
-            console.error(`Error reading file ${filePath}:`, error);
+            const errMsg = ErrorRecovery.getErrorMessage(error);
+            console.error(`Error reading file ${filePath}: ${errMsg}`, error);
             return null;
         }
     }

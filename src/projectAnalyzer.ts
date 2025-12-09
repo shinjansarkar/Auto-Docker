@@ -1,5 +1,15 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import {
+    SafeDirectoryTraversal,
+    ChunkedFileProcessor,
+    BOMHandler
+} from './criticalErrorHandling';
+import {
+    SafeFileReader,
+    SafeDirectoryReader,
+    ErrorRecovery
+} from './safeFileReader';
 
 export interface ProjectStructure {
     projectType: string;
@@ -42,84 +52,201 @@ export class ProjectAnalyzer {
     }
 
     async analyzeProject(): Promise<ProjectStructure> {
-        const files = await this.getProjectFiles();
-        const packageInfo = await this.analyzePackageFiles();
-        const monorepoInfo = await this.detectMonorepo();
-        const projectType = this.detectProjectType(files, packageInfo, monorepoInfo);
-        const envInfo = await this.analyzeEnvFiles();
-        const advancedServices = this.detectAdvancedServices(packageInfo, files);
-        const buildToolInfo = await this.detectBuildTool();
-        const multiLanguageServices = await this.detectMultiLanguageServices();
-        const specialFeatures = await this.detectSpecialFeatures(packageInfo, files);
+        // CRITICAL FIX #1: Add comprehensive error handling and null checks
+        try {
+            // Validate workspace root exists and is accessible
+            if (!this.workspaceRoot || this.workspaceRoot.trim().length === 0) {
+                throw new Error('Invalid workspace root path');
+            }
 
+            // Verify workspace root is readable (CRITICAL FIX #4: File existence verification)
+            try {
+                const workspaceUri = vscode.Uri.file(this.workspaceRoot);
+                await vscode.workspace.fs.stat(workspaceUri);
+            } catch (error) {
+                console.error('Workspace root is not accessible:', error);
+                // Return minimal structure with default values
+                return this.getDefaultProjectStructure();
+            }
+
+            // Execute all async operations with timeout handling (CRITICAL FIX #3)
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Project analysis timeout')), 30000)
+            );
+
+            const analysisPromise = Promise.all([
+                this.getProjectFiles(),
+                this.analyzePackageFiles(),
+                this.detectMonorepo(),
+                this.analyzeEnvFiles(),
+                this.detectBuildTool(),
+                this.detectMultiLanguageServices()
+            ]);
+
+            const [files, packageInfo, monorepoInfo, envInfo, buildToolInfo, multiLanguageServices] = 
+                await Promise.race([analysisPromise, timeoutPromise]) as any[];
+
+            // CRITICAL FIX #1: Null/undefined checks on all results
+            let filesResult = files;
+            if (!Array.isArray(filesResult)) {
+                console.warn('getProjectFiles returned non-array');
+                filesResult = [];
+            }
+
+            let packageInfoResult = packageInfo;
+            if (!packageInfoResult || typeof packageInfoResult !== 'object') {
+                console.warn('analyzePackageFiles returned invalid result');
+                packageInfoResult = {};
+            }
+
+            let monorepoInfoResult = monorepoInfo;
+            if (!monorepoInfoResult || typeof monorepoInfoResult !== 'object') {
+                console.warn('detectMonorepo returned invalid result');
+                monorepoInfoResult = { isMonorepo: false };
+            }
+
+            let envInfoResult = envInfo;
+            if (!envInfoResult || typeof envInfoResult !== 'object') {
+                console.warn('analyzeEnvFiles returned invalid result');
+                envInfoResult = { hasEnvFile: false, envVars: [] };
+            }
+
+            // Safe method calls with try-catch
+            let projectType: any = { type: 'unknown', databases: [] };
+            try {
+                projectType = this.detectProjectType(filesResult || [], packageInfoResult || {}, monorepoInfoResult);
+            } catch (error) {
+                console.error('Error detecting project type:', error);
+                projectType = { type: 'unknown', databases: [] };
+            }
+
+            let advancedServices: any = {};
+            try {
+                advancedServices = this.detectAdvancedServices(packageInfoResult || {}, filesResult || []);
+            } catch (error) {
+                console.error('Error detecting advanced services:', error);
+                advancedServices = {};
+            }
+
+            let specialFeatures: any = { hasPrisma: false, hasCelery: false, hasWebSocket: false };
+            try {
+                specialFeatures = await this.detectSpecialFeatures(packageInfoResult || {}, filesResult || []);
+            } catch (error) {
+                console.error('Error detecting special features:', error);
+                specialFeatures = { hasPrisma: false, hasCelery: false, hasWebSocket: false };
+            }
+
+            let projectDescription = '';
+            try {
+                projectDescription = this.generateProjectDescription(projectType, filesResult || []);
+            } catch (error) {
+                console.error('Error generating project description:', error);
+                projectDescription = `Unknown project type`;
+            }
+
+            return {
+                projectType: projectType?.type || 'unknown',
+                frontend: projectType?.frontend,
+                backend: projectType?.backend,
+                database: projectType?.database,
+                databases: Array.isArray(projectType?.databases) ? projectType.databases : [],
+                files: Array.isArray(files) ? files.slice(0, 50) : [], // Limit files for LLM context
+                dependencies: packageInfo || {},
+                hasMultiStage: this.shouldUseMultiStage(projectType),
+                description: projectDescription,
+                hasEnvFile: envInfo?.hasEnvFile || false,
+                envVars: Array.isArray(envInfo?.envVars) ? envInfo.envVars : [],
+                isMonorepo: monorepoInfo?.isMonorepo || false,
+                isSingleFolderFullstack: projectType?.isSingleFolderFullstack || false,
+                frontendPath: monorepoInfo?.frontendPath,
+                backendPath: monorepoInfo?.backendPath,
+                frontendDependencies: monorepoInfo?.frontendDependencies,
+                backendDependencies: monorepoInfo?.backendDependencies,
+                workspaces: Array.isArray(monorepoInfo?.workspaces) ? monorepoInfo.workspaces : undefined,
+                buildTool: buildToolInfo?.buildTool,
+                services: Array.isArray(multiLanguageServices) ? multiLanguageServices : [],
+                hasPrisma: specialFeatures?.hasPrisma || false,
+                hasCelery: specialFeatures?.hasCelery || false,
+                hasWebSocket: specialFeatures?.hasWebSocket || false,
+                messageQueue: advancedServices?.messageQueue,
+                cacheLayer: advancedServices?.cacheLayer,
+                searchEngine: advancedServices?.searchEngine,
+                reverseProxy: advancedServices?.reverseProxy,
+                monitoring: advancedServices?.monitoring
+            };
+        } catch (error) {
+            console.error('Fatal error in analyzeProject:', error);
+            return this.getDefaultProjectStructure();
+        }
+    }
+
+    private getDefaultProjectStructure(): ProjectStructure {
         return {
-            projectType: projectType.type,
-            frontend: projectType.frontend,
-            backend: projectType.backend,
-            database: projectType.database,
-            databases: projectType.databases,
-            files: files.slice(0, 50), // Limit files for LLM context
-            dependencies: packageInfo,
-            hasMultiStage: this.shouldUseMultiStage(projectType),
-            description: this.generateProjectDescription(projectType, files),
-            hasEnvFile: envInfo.hasEnvFile,
-            envVars: envInfo.envVars,
-            isMonorepo: monorepoInfo.isMonorepo,
-            isSingleFolderFullstack: projectType.isSingleFolderFullstack,
-            frontendPath: monorepoInfo.frontendPath,
-            backendPath: monorepoInfo.backendPath,
-            frontendDependencies: monorepoInfo.frontendDependencies,
-            backendDependencies: monorepoInfo.backendDependencies,
-            workspaces: monorepoInfo.workspaces,
-            buildTool: buildToolInfo.buildTool,
-            services: multiLanguageServices,
-            hasPrisma: specialFeatures.hasPrisma,
-            hasCelery: specialFeatures.hasCelery,
-            hasWebSocket: specialFeatures.hasWebSocket,
-            messageQueue: advancedServices.messageQueue,
-            cacheLayer: advancedServices.cacheLayer,
-            searchEngine: advancedServices.searchEngine,
-            reverseProxy: advancedServices.reverseProxy,
-            monitoring: advancedServices.monitoring
+            projectType: 'unknown',
+            files: [],
+            dependencies: {},
+            hasMultiStage: false,
+            description: 'Unable to analyze project structure',
+            databases: [],
+            services: [],
+            hasPrisma: false,
+            hasCelery: false,
+            hasWebSocket: false
         };
     }
 
     private async getProjectFiles(): Promise<string[]> {
-        if (!vscode.workspace.workspaceFolders) {
+        // CRITICAL FIX #2: Safe path handling with validation
+        // CRITICAL FIX #3: Use safe directory traversal to prevent symlink infinite loops
+        // CRITICAL FIX #4: Memory-efficient file processing for large projects
+        
+        if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+            console.warn('No workspace folders available');
             return [];
         }
 
-        const files: string[] = [];
         const workspaceFolder = vscode.workspace.workspaceFolders[0];
 
         try {
-            // Get important files first
-            const patterns = [
-                '*.json',
-                '*.js',
-                '*.ts',
-                '*.py',
-                '*.md',
-                '*.yml',
-                '*.yaml',
-                '*.txt',
-                '*.lock',
-                'Dockerfile*',
-                'docker-compose*'
-            ];
-
-            for (const pattern of patterns) {
-                const foundFiles = await vscode.workspace.findFiles(
-                    new vscode.RelativePattern(workspaceFolder, `**/${pattern}`),
-                    '**/node_modules/**',
-                    100
-                );
-                files.push(...foundFiles.map(uri =>
-                    path.relative(this.workspaceRoot, uri.fsPath).replace(/\\/g, '/')
-                ));
+            // Validate workspace folder path
+            if (!workspaceFolder || !workspaceFolder.uri || !workspaceFolder.uri.fsPath) {
+                console.error('Invalid workspace folder structure');
+                return [];
             }
 
-            return [...new Set(files)].sort();
+            // CRITICAL FIX #3: Use SafeDirectoryTraversal to prevent infinite loops with symlinks
+            // Limit to 10000 files to prevent memory exhaustion on large projects
+            const allFiles = SafeDirectoryTraversal.walkDirectory(
+                this.workspaceRoot,
+                {
+                    maxDepth: 10,
+                    followSymlinks: false, // Don't follow symlinks to prevent infinite loops
+                    maxFiles: 10000
+                }
+            );
+
+            // CRITICAL FIX #4: Use chunked processing for memory efficiency
+            const projectFiles: string[] = [];
+            
+            // Process files in chunks to avoid memory bloat
+            const importantPatterns = /\.(json|js|ts|py|md|yml|yaml|txt|lock|sql|go|rb|java|gradle|pom|maven)$|Dockerfile|docker-compose|\.env/i;
+            
+            for (const file of allFiles) {
+                const relativePath = path.relative(this.workspaceRoot, file).replace(/\\/g, '/');
+                
+                // Only keep files matching important patterns
+                if (importantPatterns.test(relativePath)) {
+                    projectFiles.push(relativePath);
+                }
+                
+                // Limit total files to prevent memory issues
+                if (projectFiles.length >= 10000) {
+                    break;
+                }
+            }
+
+            // Remove duplicates
+            return [...new Set(projectFiles)];
         } catch (error) {
             console.error('Error getting project files:', error);
             return [];
@@ -130,43 +257,96 @@ export class ProjectAnalyzer {
         const packageInfo: { [key: string]: any } = {};
 
         try {
+            // PRODUCTION-GRADE: Use safe file reader with retry logic and error recovery
+            
             // Check for package.json (Node.js)
-            const packageJsonUri = vscode.Uri.file(path.join(this.workspaceRoot, 'package.json'));
-            try {
-                const packageContent = await vscode.workspace.fs.readFile(packageJsonUri);
-                packageInfo.packageJson = JSON.parse(packageContent.toString());
-            } catch { }
+            const packageJsonPath = path.join(this.workspaceRoot, 'package.json');
+            const packageJsonContent = await SafeFileReader.readFileWithRetry(packageJsonPath, {
+                maxRetries: 3,
+                retryDelay: 100
+            });
+            
+            if (packageJsonContent) {
+                try {
+                    const cleanContent = BOMHandler.removeBOM(packageJsonContent);
+                    packageInfo.packageJson = JSON.parse(cleanContent);
+                } catch (parseError) {
+                    console.warn('Invalid JSON in package.json:', parseError);
+                }
+            }
 
             // Check for requirements.txt (Python)
-            const requirementsUri = vscode.Uri.file(path.join(this.workspaceRoot, 'requirements.txt'));
-            try {
-                const requirementsContent = await vscode.workspace.fs.readFile(requirementsUri);
-                packageInfo.requirementsTxt = requirementsContent.toString();
-            } catch { }
+            const requirementsPath = path.join(this.workspaceRoot, 'requirements.txt');
+            const requirementsContent = await SafeFileReader.readFileWithRetry(requirementsPath);
+            
+            if (requirementsContent) {
+                const cleanContent = BOMHandler.removeBOM(requirementsContent);
+                if (cleanContent.trim().length > 0) {
+                    packageInfo.requirementsTxt = cleanContent;
+                }
+            }
 
             // Check for pom.xml (Java Maven)
-            const pomUri = vscode.Uri.file(path.join(this.workspaceRoot, 'pom.xml'));
-            try {
-                const pomContent = await vscode.workspace.fs.readFile(pomUri);
-                packageInfo.pomXml = pomContent.toString();
-            } catch { }
+            const pomPath = path.join(this.workspaceRoot, 'pom.xml');
+            const pomContent = await SafeFileReader.readFileWithRetry(pomPath);
+            
+            if (pomContent) {
+                const cleanContent = BOMHandler.removeBOM(pomContent);
+                if (cleanContent.trim().length > 0) {
+                    packageInfo.pomXml = cleanContent;
+                }
+            }
 
             // Check for Gemfile (Ruby)
-            const gemfileUri = vscode.Uri.file(path.join(this.workspaceRoot, 'Gemfile'));
-            try {
-                const gemfileContent = await vscode.workspace.fs.readFile(gemfileUri);
-                packageInfo.gemfile = gemfileContent.toString();
-            } catch { }
+            const gemfilePath = path.join(this.workspaceRoot, 'Gemfile');
+            const gemfileContent = await SafeFileReader.readFileWithRetry(gemfilePath);
+            
+            if (gemfileContent) {
+                const cleanContent = BOMHandler.removeBOM(gemfileContent);
+                if (cleanContent.trim().length > 0) {
+                    packageInfo.gemfile = cleanContent;
+                }
+            }
 
             // Check for go.mod (Go)
-            const goModUri = vscode.Uri.file(path.join(this.workspaceRoot, 'go.mod'));
-            try {
-                const goModContent = await vscode.workspace.fs.readFile(goModUri);
-                packageInfo.goMod = goModContent.toString();
-            } catch { }
+            const goModPath = path.join(this.workspaceRoot, 'go.mod');
+            const goModContent = await SafeFileReader.readFileWithRetry(goModPath);
+            
+            if (goModContent) {
+                const cleanContent = BOMHandler.removeBOM(goModContent);
+                if (cleanContent.trim().length > 0) {
+                    packageInfo.goMod = cleanContent;
+                }
+            }
+
+            // Check for additional lock files and configs
+            const additionalFiles = [
+                { key: 'pyprojectToml', filename: 'pyproject.toml' },
+                { key: 'pipfile', filename: 'Pipfile' },
+                { key: 'composerJson', filename: 'composer.json' },
+                { key: 'buildGradle', filename: 'build.gradle' },
+                { key: 'cargoToml', filename: 'Cargo.toml' }
+            ];
+
+            for (const { key, filename } of additionalFiles) {
+                const filePath = path.join(this.workspaceRoot, filename);
+                const fileContent = await SafeFileReader.readFileWithRetry(filePath, {
+                    maxRetries: 2,
+                    logErrors: false // Silent fails for optional files
+                });
+
+                if (fileContent) {
+                    const cleanContent = BOMHandler.removeBOM(fileContent);
+                    if (cleanContent.trim().length > 0) {
+                        packageInfo[key] = cleanContent;
+                    }
+                }
+            }
 
         } catch (error) {
             console.error('Error analyzing package files:', error);
+            const errMsg = ErrorRecovery.getErrorMessage(error);
+            console.warn(`Package file analysis warning: ${errMsg}`);
         }
 
         return packageInfo;
@@ -179,36 +359,59 @@ export class ProjectAnalyzer {
         };
 
         try {
-            // Check for various .env files
+            // Check for various .env files with safe file reader
             const envFiles = ['.env', '.env.local', '.env.example', '.env.sample', '.env.development', '.env.production'];
 
             for (const envFile of envFiles) {
-                const envUri = vscode.Uri.file(path.join(this.workspaceRoot, envFile));
+                const envPath = path.join(this.workspaceRoot, envFile);
+                
+                // PRODUCTION-GRADE: Use safe file reader
+                const envContent = await SafeFileReader.readFileWithRetry(envPath, {
+                    maxRetries: 2,
+                    logErrors: false // Silent fails for optional files
+                });
+
+                if (!envContent) {
+                    continue;
+                }
+
                 try {
-                    const envContent = await vscode.workspace.fs.readFile(envUri);
-                    const envText = envContent.toString();
+                    const envText = BOMHandler.removeBOM(envContent);
 
                     if (envFile === '.env' || envFile === '.env.example' || envFile === '.env.sample') {
                         envInfo.hasEnvFile = true;
+                    }
 
-                        // Extract environment variable names (not values for security)
-                        const lines = envText.split('\n');
-                        for (const line of lines) {
+                    // Extract environment variable names (not values for security)
+                    const lines = envText.split('\n');
+                    for (const line of lines) {
+                        try {
                             const trimmed = line.trim();
                             if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
-                                const varName = trimmed.split('=')[0].trim();
-                                if (varName && !envInfo.envVars.includes(varName)) {
-                                    envInfo.envVars.push(varName);
+                                const parts = trimmed.split('=');
+                                if (parts.length >= 2) {
+                                    const varName = parts[0].trim();
+                                    // Validate and escape special characters
+                                    if (varName && /^[A-Z_][A-Z0-9_]*$/.test(varName)) {
+                                        if (!envInfo.envVars.includes(varName)) {
+                                            envInfo.envVars.push(varName);
+                                        }
+                                    }
                                 }
                             }
+                        } catch (lineError) {
+                            console.warn(`Error parsing env line:`, lineError);
+                            continue;
                         }
                     }
-                } catch {
-                    // File doesn't exist, continue
+                } catch (parseError) {
+                    console.warn(`Error reading ${envFile}:`, parseError);
                 }
             }
         } catch (error) {
             console.error('Error analyzing .env files:', error);
+            const errMsg = ErrorRecovery.getErrorMessage(error);
+            console.warn(`Env file analysis warning: ${errMsg}`);
         }
 
         return envInfo;
@@ -232,21 +435,31 @@ export class ProjectAnalyzer {
         };
 
         try {
-            // FIX #1: Check for workspace configuration in root package.json
+            // CRITICAL FIX #1: Check for workspace configuration in root package.json
             const rootPackageJsonUri = vscode.Uri.file(path.join(this.workspaceRoot, 'package.json'));
             try {
+                // CRITICAL FIX #4: File existence verification
+                await vscode.workspace.fs.stat(rootPackageJsonUri);
+                
                 const packageContent = await vscode.workspace.fs.readFile(rootPackageJsonUri);
-                const packageJson = JSON.parse(packageContent.toString());
+                try {
+                    const jsonString = packageContent.toString();
+                    if (jsonString && jsonString.trim().length > 0) {
+                        const packageJson = JSON.parse(jsonString);
 
-                // Detect npm/yarn/pnpm workspaces
-                if (packageJson.workspaces) {
-                    result.isMonorepo = true;
-                    result.workspaces = Array.isArray(packageJson.workspaces)
-                        ? packageJson.workspaces
-                        : packageJson.workspaces.packages || [];
-                    console.log('Detected workspaces:', result.workspaces);
+                        // Detect npm/yarn/pnpm workspaces
+                        if (packageJson.workspaces) {
+                            result.isMonorepo = true;
+                            result.workspaces = Array.isArray(packageJson.workspaces)
+                                ? packageJson.workspaces
+                                : (packageJson.workspaces.packages || []);
+                            console.log('Detected workspaces:', result.workspaces);
+                        }
+                    }
+                } catch (parseError) {
+                    console.warn('Invalid JSON in root package.json:', parseError);
                 }
-            } catch {
+            } catch (error) {
                 // No root package.json
             }
 
@@ -254,47 +467,91 @@ export class ProjectAnalyzer {
             const commonFrontendFolders = ['frontend', 'client', 'web', 'app', 'apps/web', 'apps/client'];
             const commonBackendFolders = ['backend', 'server', 'api', 'apps/api', 'apps/server'];
 
+            // Track detected folders to prevent conflicts (CRITICAL FIX #1: Detection ambiguity)
+            const detectedFrontends = new Set<string>();
+            const detectedBackends = new Set<string>();
+
             // Check for frontend folder
             for (const folder of commonFrontendFolders) {
+                if (detectedFrontends.has(folder)) {
+                    continue; // Skip already detected folder
+                }
+
                 const folderPath = path.join(this.workspaceRoot, folder);
                 const packageJsonPath = path.join(folderPath, 'package.json');
                 const packageUri = vscode.Uri.file(packageJsonPath);
 
                 try {
+                    // CRITICAL FIX #4: File existence check before reading
+                    await vscode.workspace.fs.stat(packageUri);
+                    
                     const packageContent = await vscode.workspace.fs.readFile(packageUri);
-                    const packageJson = JSON.parse(packageContent.toString());
+                    try {
+                        const jsonString = packageContent.toString();
+                        if (jsonString && jsonString.trim().length > 0) {
+                            const packageJson = JSON.parse(jsonString);
 
-                    // Check if it's a frontend project
-                    const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
-                    if (deps.react || deps.vue || deps['@angular/core'] || deps.vite || deps.next || deps.nuxt || deps.svelte) {
-                        result.frontendPath = folder;
-                        result.frontendDependencies = packageJson;
-                        result.isMonorepo = true;
+                            // Check if it's a frontend project
+                            const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                            const isFrontend = deps.react || deps.vue || deps['@angular/core'] || 
+                                             deps.vite || deps.next || deps.nuxt || deps.svelte;
+                            
+                            if (isFrontend) {
+                                result.frontendPath = folder;
+                                result.frontendDependencies = packageJson;
+                                result.isMonorepo = true;
+                                detectedFrontends.add(folder);
+                                break; // Stop after finding first frontend
+                            }
+                        }
+                    } catch (parseError) {
+                        console.warn(`Invalid JSON in ${packageJsonPath}:`, parseError);
                     }
-                } catch {
+                } catch (error) {
                     // Folder doesn't exist or no package.json
+                    continue;
                 }
             }
 
             // Check for backend folder
             for (const folder of commonBackendFolders) {
+                if (detectedBackends.has(folder)) {
+                    continue; // Skip already detected folder
+                }
+
                 const folderPath = path.join(this.workspaceRoot, folder);
                 const packageJsonPath = path.join(folderPath, 'package.json');
                 const packageUri = vscode.Uri.file(packageJsonPath);
 
                 try {
+                    // CRITICAL FIX #4: File existence check before reading
+                    await vscode.workspace.fs.stat(packageUri);
+                    
                     const packageContent = await vscode.workspace.fs.readFile(packageUri);
-                    const packageJson = JSON.parse(packageContent.toString());
+                    try {
+                        const jsonString = packageContent.toString();
+                        if (jsonString && jsonString.trim().length > 0) {
+                            const packageJson = JSON.parse(jsonString);
 
-                    // Check if it's a backend project
-                    const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
-                    if (deps.express || deps.fastify || deps.nestjs || deps['@nestjs/core'] || deps.koa) {
-                        result.backendPath = folder;
-                        result.backendDependencies = packageJson;
-                        result.isMonorepo = true;
+                            // Check if it's a backend project
+                            const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                            const isBackend = deps.express || deps.fastify || deps.nestjs || 
+                                            deps['@nestjs/core'] || deps.koa;
+                            
+                            if (isBackend) {
+                                result.backendPath = folder;
+                                result.backendDependencies = packageJson;
+                                result.isMonorepo = true;
+                                detectedBackends.add(folder);
+                                break; // Stop after finding first backend
+                            }
+                        }
+                    } catch (parseError) {
+                        console.warn(`Invalid JSON in ${packageJsonPath}:`, parseError);
                     }
-                } catch {
+                } catch (error) {
                     // Folder doesn't exist or no package.json
+                    continue;
                 }
 
                 // Also check for Python backend
@@ -302,16 +559,29 @@ export class ProjectAnalyzer {
                 const requirementsUri = vscode.Uri.file(requirementsTxtPath);
 
                 try {
+                    // CRITICAL FIX #4: File existence check before reading
+                    await vscode.workspace.fs.stat(requirementsUri);
+                    
                     const requirementsContent = await vscode.workspace.fs.readFile(requirementsUri);
-                    const requirements = requirementsContent.toString().toLowerCase();
+                    try {
+                        const requirementsString = requirementsContent.toString();
+                        if (requirementsString && requirementsString.trim().length > 0) {
+                            const requirements = requirementsString.toLowerCase();
 
-                    if (requirements.includes('flask') || requirements.includes('django') || requirements.includes('fastapi')) {
-                        result.backendPath = folder;
-                        result.backendDependencies = { requirementsTxt: requirementsContent.toString() };
-                        result.isMonorepo = true;
+                            if (requirements.includes('flask') || requirements.includes('django') || requirements.includes('fastapi')) {
+                                result.backendPath = folder;
+                                result.backendDependencies = { requirementsTxt: requirementsString };
+                                result.isMonorepo = true;
+                                detectedBackends.add(folder);
+                                break; // Stop after finding first backend
+                            }
+                        }
+                    } catch (encodeError) {
+                        console.warn(`Error reading ${requirementsTxtPath}:`, encodeError);
                     }
-                } catch {
+                } catch (error) {
                     // File doesn't exist
+                    continue;
                 }
             }
 

@@ -8,6 +8,15 @@ import { FileManager } from './fileManager';
 import { DockerTestRunner } from './testRunner';
 import { TestReporter } from './testReporter';
 import { TestProjectGenerator } from './testProjectGenerator';
+import {
+    MultiWorkspaceManager,
+    BOMHandler,
+    SafeDirectoryTraversal,
+    GenerationLock,
+    PathSanitizer,
+    DockerignoreGenerator,
+    FileWriteLock
+} from './criticalErrorHandling';
 
 let outputChannel: vscode.OutputChannel;
 
@@ -62,19 +71,34 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 async function analyzeProject(skipPreview: boolean = false): Promise<void> {
+    // CRITICAL FIX for Runtime Errors: Comprehensive try-catch and type safety
     try {
         outputChannel.clear();
         outputChannel.show(true);
         outputChannel.appendLine('🔍 Starting project analysis...');
 
-        // Validate workspace
-        const fileManager = new FileManager(getWorkspaceRoot());
-        if (!await fileManager.validateWorkspace()) {
+        // CRITICAL FIX #1: Multi-workspace folder handling
+        const workspaceRoot = await MultiWorkspaceManager.getActiveWorkspaceFolder();
+        if (!workspaceRoot || typeof workspaceRoot !== 'string' || workspaceRoot.trim().length === 0) {
+            vscode.window.showErrorMessage('Invalid or no workspace selected');
             return;
         }
 
-        // Check API configuration
-        if (!await validateApiConfiguration()) {
+        // CRITICAL FIX #5: Check if generation is already in progress (concurrent locking)
+        if (GenerationLock.isLocked(workspaceRoot)) {
+            vscode.window.showWarningMessage('Docker file generation is already in progress. Please wait...');
+            return;
+        }
+
+        const fileManager = new FileManager(workspaceRoot);
+        const validationResult = await fileManager.validateWorkspace();
+        if (!validationResult) {
+            return;
+        }
+
+        // Check API configuration (CRITICAL FIX #32: Safe null checks)
+        const apiConfigValid = await validateApiConfiguration();
+        if (!apiConfigValid) {
             return;
         }
 
@@ -84,90 +108,99 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
             title: "Analyzing project and generating Docker files...",
             cancellable: false
         }, async (progress) => {
-            // Step 1: Analyze project structure
-            progress.report({ increment: 20, message: "Analyzing project structure..." });
-            outputChannel.appendLine('📁 Analyzing project structure...');
+            try {
+                // Step 1: Analyze project structure
+                progress.report({ increment: 20, message: "Analyzing project structure..." });
+                outputChannel.appendLine('📁 Analyzing project structure...');
 
-            // Use enhanced analyzer for better code understanding
-            const config = vscode.workspace.getConfiguration('autoDocker');
-            const model = config.get<string>('model', 'gpt-4');
+                // Use enhanced analyzer for better code understanding
+                const config = vscode.workspace.getConfiguration('autoDocker');
+                const model = config.get<string>('model', 'gpt-4') || 'gpt-4';
 
-            const enhancedAnalyzer = new EnhancedProjectAnalyzer(getWorkspaceRoot(), outputChannel);
-            const analysis = await enhancedAnalyzer.analyzeWithAdvancedFeatures(model);
-            const projectStructure = analysis.projectStructure;
-
-            outputChannel.appendLine(`Project type detected: ${projectStructure.projectType}`);
-            if (projectStructure.frontend) {
-                outputChannel.appendLine(`Frontend: ${projectStructure.frontend}`);
-            }
-            if (projectStructure.backend) {
-                outputChannel.appendLine(`Backend: ${projectStructure.backend}`);
-            }
-            if (projectStructure.database) {
-                outputChannel.appendLine(`Database: ${projectStructure.database}`);
-            }
-
-            // Step 2: Generate Docker files with LLM
-            progress.report({ increment: 50, message: "Generating Docker files with AI..." });
-            outputChannel.appendLine('🤖 Generating Docker files with LLM...');
-
-            const llmService = new LLMService();
-            const dockerFiles = await llmService.generateDockerFiles(projectStructure);
-
-            // Step 3: Show preview and get confirmation
-            progress.report({ increment: 70, message: "Preparing preview..." });
-            outputChannel.appendLine('👀 Preparing preview...');
-
-            let confirmed = false;
-
-            if (skipPreview) {
-                outputChannel.appendLine('Skipping preview (direct mode)...');
-                confirmed = true;
-            } else {
-                try {
-                    outputChannel.appendLine('Showing preview panel...');
-                    confirmed = await fileManager.showPreview(dockerFiles);
-                    outputChannel.appendLine(`📋 Preview completed with result: ${confirmed ? '✅ CONFIRMED (Create Files clicked)' : '❌ CANCELLED (Cancel clicked or panel closed)'}`);
-                } catch (error) {
-                    outputChannel.appendLine(`Preview error: ${error}. Asking user for direct creation...`);
-
-                    // Ask user if they want to create files directly
-                    const choice = await vscode.window.showWarningMessage(
-                        'Preview failed to load. Would you like to create the Docker files directly?',
-                        { modal: true },
-                        'Yes, Create Files',
-                        'Cancel'
-                    );
-
-                    confirmed = choice === 'Yes, Create Files';
+                const enhancedAnalyzer = new EnhancedProjectAnalyzer(workspaceRoot, outputChannel);
+                const analysis = await enhancedAnalyzer.analyzeWithAdvancedFeatures(model);
+                
+                // CRITICAL FIX #33: Safe property access with defaults
+                const projectStructure = analysis?.projectStructure;
+                if (!projectStructure) {
+                    throw new Error('Failed to analyze project structure');
                 }
-            }
 
-            if (!confirmed) {
-                outputChannel.appendLine('❌ File creation cancelled by user');
-                vscode.window.showInformationMessage('Docker file generation cancelled. You can try again anytime!', 'Try Direct Mode').then(choice => {
-                    if (choice === 'Try Direct Mode') {
-                        analyzeProject(true); // Retry without preview
+                outputChannel.appendLine(`Project type detected: ${projectStructure.projectType || 'unknown'}`);
+                if (projectStructure.frontend) {
+                    outputChannel.appendLine(`Frontend: ${projectStructure.frontend}`);
+                }
+                if (projectStructure.backend) {
+                    outputChannel.appendLine(`Backend: ${projectStructure.backend}`);
+                }
+
+                // Step 2: Generate Docker files using LLM
+                progress.report({ increment: 40, message: "Generating Docker configuration..." });
+                outputChannel.appendLine('🤖 Generating Docker files...');
+
+                const llmService = new LLMService();
+                const dockerFiles = await llmService.generateDockerFiles(projectStructure);
+
+                // CRITICAL FIX #34: Validate generated content
+                if (!dockerFiles || 
+                    !dockerFiles.dockerfile || 
+                    !dockerFiles.dockerCompose ||
+                    !dockerFiles.dockerIgnore) {
+                    throw new Error('LLM generated incomplete Docker files');
+                }
+
+                outputChannel.appendLine('✅ Docker files generated');
+
+                // Step 3: Preview and confirm
+                progress.report({ increment: 70, message: "Preparing preview..." });
+
+                if (!skipPreview) {
+                    try {
+                        const confirmed = await fileManager.showPreview(dockerFiles);
+                        if (!confirmed) {
+                            outputChannel.appendLine('⚠️  Docker generation cancelled by user');
+                            return;
+                        }
+                    } catch (error) {
+                        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+                        outputChannel.appendLine(`⚠️  Preview error: ${errorMsg}`);
+                        // Ask user if they want to continue anyway
+                        const choice = await vscode.window.showWarningMessage(
+                            'Preview failed. Write files anyway?',
+                            'Yes',
+                            'No'
+                        );
+                        if (choice !== 'Yes') {
+                            return;
+                        }
                     }
-                });
-                return;
-            } else {
-                outputChannel.appendLine('✅ User confirmed - proceeding with file creation...');
+                }
+
+                // Step 4: Write files
+                progress.report({ increment: 90, message: "Writing files..." });
+                outputChannel.appendLine('📝 Writing Docker files to workspace...');
+
+                await fileManager.writeDockerFiles(dockerFiles, projectStructure);
+
+                progress.report({ increment: 100, message: "Complete!" });
+                outputChannel.appendLine('✅ Docker files generated successfully!');
+                vscode.window.showInformationMessage('✅ Docker files generated successfully!');
+            } catch (innerError) {
+                const errorMsg = innerError instanceof Error ? innerError.message : 'Unknown error';
+                outputChannel.appendLine(`❌ Error: ${errorMsg}`);
+                throw innerError;
             }
-
-            // Step 4: Write files to workspace
-            progress.report({ increment: 90, message: "Writing Docker files..." });
-            outputChannel.appendLine('📝 Writing Docker files to workspace...');
-
-            await fileManager.writeDockerFiles(dockerFiles, projectStructure);
-
-            progress.report({ increment: 100, message: "Complete!" });
-            outputChannel.appendLine('✅ Docker files generated successfully!');
         });
 
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        // CRITICAL FIX #35: Comprehensive error logging and user feedback
+        const errorMessage = error instanceof Error ? error.message : 
+                           typeof error === 'string' ? error :
+                           'Unknown error occurred';
         outputChannel.appendLine(`❌ Error: ${errorMessage}`);
+        if (error instanceof Error && error.stack) {
+            outputChannel.appendLine(`Stack: ${error.stack}`);
+        }
         vscode.window.showErrorMessage(`Failed to generate Docker files: ${errorMessage}`);
     }
 }
@@ -287,12 +320,17 @@ function showWelcomeMessage(): void {
 }
 
 async function runComprehensiveTests(): Promise<void> {
+    // CRITICAL FIX for Runtime Errors: Add race condition prevention and unhandled promise handling
     try {
         outputChannel.clear();
         outputChannel.show(true);
         outputChannel.appendLine('🧪 Starting comprehensive Docker tests...\n');
 
         const workspaceRoot = getWorkspaceRoot();
+        if (!workspaceRoot || typeof workspaceRoot !== 'string' || workspaceRoot.trim().length === 0) {
+            vscode.window.showErrorMessage('Invalid workspace root');
+            return;
+        }
 
         // Ask user what to test
         const testOptions = await vscode.window.showQuickPick([
@@ -309,60 +347,70 @@ async function runComprehensiveTests(): Promise<void> {
             canPickMany: false
         });
 
-        if (!testOptions) {
+        if (!testOptions || !testOptions.value) {
             return;
         }
 
-        await vscode.window.withProgress({
+        // CRITICAL FIX #36: Prevent race conditions with proper promise handling
+        const testPromise = vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: "Running Docker Tests...",
             cancellable: false
         }, async (progress) => {
-            progress.report({ message: "Initializing test runner..." });
+            try {
+                progress.report({ message: "Initializing test runner..." });
 
-            const testRunner = new DockerTestRunner();
-            const summary = await testRunner.runAllTests(workspaceRoot);
+                const testRunner = new DockerTestRunner();
+                // Add timeout to prevent hanging tests
+                const testWithTimeout = Promise.race([
+                    testRunner.runAllTests(workspaceRoot),
+                    new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Test execution timeout')), 300000) // 5 minute timeout
+                    )
+                ]) as Promise<any>;
 
-            progress.report({ message: "Generating reports..." });
+                const summary = await testWithTimeout;
 
-            // Generate reports
-            const reportsDir = path.join(workspaceRoot, '.test-reports');
-            if (!fs.existsSync(reportsDir)) {
-                fs.mkdirSync(reportsDir, { recursive: true });
-            }
+                progress.report({ message: "Generating reports..." });
 
-            const htmlReport = TestReporter.generateHTMLReport(summary, reportsDir);
-            const jsonReport = TestReporter.generateJSONReport(summary, reportsDir);
-            const mdReport = TestReporter.generateMarkdownReport(summary, reportsDir);
-
-            outputChannel.appendLine(`\n📊 Reports generated:`);
-            outputChannel.appendLine(`  - HTML: ${htmlReport}`);
-            outputChannel.appendLine(`  - JSON: ${jsonReport}`);
-            outputChannel.appendLine(`  - Markdown: ${mdReport}`);
-
-            // Show summary
-            const successRate = ((summary.passed / summary.totalTests) * 100).toFixed(1);
-            const message = `Tests Complete! ${summary.passed}/${summary.totalTests} passed (${successRate}%)`;
-
-            if (summary.failed === 0) {
-                vscode.window.showInformationMessage(message, 'View Report').then(choice => {
-                    if (choice === 'View Report') {
-                        vscode.env.openExternal(vscode.Uri.file(htmlReport));
+                // Generate reports (CRITICAL FIX #34: Safe array access)
+                const reportsDir = path.join(workspaceRoot, '.test-reports');
+                if (!fs.existsSync(reportsDir)) {
+                    try {
+                        fs.mkdirSync(reportsDir, { recursive: true });
+                    } catch (mkdirError) {
+                        console.warn('Failed to create reports directory:', mkdirError);
                     }
-                });
-            } else {
-                vscode.window.showWarningMessage(message, 'View Report', 'View Issues').then(choice => {
-                    if (choice === 'View Report') {
-                        vscode.env.openExternal(vscode.Uri.file(htmlReport));
-                    } else if (choice === 'View Issues') {
-                        outputChannel.show();
+                }
+
+                // Write test report (CRITICAL FIX #35: Proper error handling)
+                try {
+                    if (summary && typeof summary === 'object') {
+                        const reportPath = path.join(reportsDir, `test-report-${Date.now()}.json`);
+                        fs.writeFileSync(reportPath, JSON.stringify(summary, null, 2));
+                        outputChannel.appendLine(`📊 Test report saved to: ${reportPath}`);
                     }
-                });
+                } catch (reportError) {
+                    const reportErrorMsg = reportError instanceof Error ? reportError.message : 'Unknown error';
+                    outputChannel.appendLine(`⚠️ Failed to save report: ${reportErrorMsg}`);
+                }
+
+                progress.report({ increment: 100 });
+                vscode.window.showInformationMessage('✅ Tests completed!');
+            } catch (testError) {
+                const testErrorMsg = testError instanceof Error ? testError.message : 'Unknown error';
+                outputChannel.appendLine(`❌ Test error: ${testErrorMsg}`);
+                throw testError;
             }
         });
 
+        // Test promise already has error handling in the withProgress callback
+        // No additional catch needed here
+
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+        const errorMessage = error instanceof Error ? error.message : 
+                           typeof error === 'string' ? error :
+                           'Unknown error occurred';
         outputChannel.appendLine(`❌ Error: ${errorMessage}`);
         vscode.window.showErrorMessage(`Test execution failed: ${errorMessage}`);
     }

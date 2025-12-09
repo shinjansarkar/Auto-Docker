@@ -2,6 +2,11 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { DockerFiles } from './llmService';
 import { ProjectStructure } from './projectAnalyzer';
+import {
+    PathSanitizer,
+    DockerignoreGenerator,
+    FileWriteLock
+} from './criticalErrorHandling';
 
 export class FileManager {
     private workspaceRoot: string;
@@ -92,11 +97,25 @@ export class FileManager {
     private async writeFiles(files: Array<{ name: string; content: string }>, outputPath: string): Promise<void> {
         for (const file of files) {
             const filePath = path.join(outputPath, file.name);
-            const fileUri = vscode.Uri.file(filePath);
 
             try {
-                await vscode.workspace.fs.writeFile(fileUri, Buffer.from(file.content, 'utf8'));
+                // CRITICAL FIX #21: Validate path for special characters
+                if (!PathSanitizer.isValidPath(filePath)) {
+                    console.error(`Invalid path: ${filePath}`);
+                    vscode.window.showErrorMessage(`Invalid file path: ${file.name}`);
+                    continue;
+                }
+
+                // CRITICAL FIX #23: Use atomic file write with locking
+                await FileWriteLock.writeFileWithLock(filePath, file.content);
                 console.log(`Created: ${file.name}`);
+
+                // CRITICAL FIX #22: Ensure .dockerignore has security entries
+                if (file.name === '.dockerignore' || file.name === 'Dockerfile' || file.name === 'docker-compose.yml') {
+                    if (file.name === '.dockerignore') {
+                        DockerignoreGenerator.validateAndUpdateDockerigore(outputPath);
+                    }
+                }
             } catch (error) {
                 console.error(`Failed to write ${file.name}:`, error);
                 vscode.window.showErrorMessage(`Failed to write ${file.name}: ${error}`);
@@ -711,17 +730,13 @@ CMD ["npm", "start"]`;
         const hasEnv = projectStructure.hasEnvFile;
         const backendPort = projectStructure.backendDependencies?.requirementsTxt ? '5000' : '5000';
 
-        const dependencies = ['backend'];
-        if (projectStructure.databases && projectStructure.databases.length > 0) {
-            projectStructure.databases.forEach(db => dependencies.push(db));
-        }
-        if (projectStructure.cacheLayer) dependencies.push(projectStructure.cacheLayer);
-        if (projectStructure.messageQueue) dependencies.push(projectStructure.messageQueue);
-        if (projectStructure.searchEngine) dependencies.push(projectStructure.searchEngine);
+        // CRITICAL FIX for Docker Config: Proper depends_on syntax and health checks
+        let compose = `version: '3.8'
 
-        let compose = `services:
+services:
   frontend:
     build: ./${projectStructure.frontendPath}
+    container_name: app-frontend
     ports:
       - "3000:3000"
     env_file:
@@ -732,10 +747,13 @@ CMD ["npm", "start"]`;
     networks:
       - app-network
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
   backend:
     build: ./${projectStructure.backendPath}
+    container_name: app-backend
     ports:
       - "${backendPort}:${backendPort}"
     env_file:
@@ -745,25 +763,60 @@ CMD ["npm", "start"]`;
       - /app/node_modules`}
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${backendPort}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
     depends_on:`;
 
-        // Add dependencies
+        // Add dependencies with proper syntax (CRITICAL FIX #6)
         const backendDeps: string[] = [];
         if (projectStructure.databases && projectStructure.databases.length > 0) {
             projectStructure.databases.forEach(db => {
-                if (db !== 'sqlite') backendDeps.push(db);
+                if (db !== 'sqlite') {
+                    backendDeps.push(db);
+                }
             });
         }
         if (projectStructure.cacheLayer === 'redis' || projectStructure.databases?.includes('redis')) {
-            if (!backendDeps.includes('redis')) backendDeps.push('redis');
+            if (!backendDeps.includes('redis')) {
+                backendDeps.push('redis');
+            }
         }
-        if (projectStructure.cacheLayer === 'memcached') backendDeps.push('memcached');
-        if (projectStructure.messageQueue) backendDeps.push(projectStructure.messageQueue);
-        if (projectStructure.searchEngine) backendDeps.push(projectStructure.searchEngine);
+        if (projectStructure.cacheLayer === 'memcached') {
+            if (!backendDeps.includes('memcached')) {
+                backendDeps.push('memcached');
+            }
+        }
+        if (projectStructure.messageQueue === 'rabbitmq') {
+            if (!backendDeps.includes('rabbitmq')) {
+                backendDeps.push('rabbitmq');
+            }
+        }
+        if (projectStructure.messageQueue === 'kafka') {
+            if (!backendDeps.includes('kafka')) {
+                backendDeps.push('kafka');
+            }
+        }
+        if (projectStructure.searchEngine) {
+            const searchService = projectStructure.searchEngine === 'opensearch' ? 'opensearch' : 'elasticsearch';
+            if (!backendDeps.includes(searchService)) {
+                backendDeps.push(searchService);
+            }
+        }
 
         if (backendDeps.length > 0) {
             backendDeps.forEach(dep => {
-                compose += `\n      - ${dep}`;
+                compose += `\n      ${dep}:`;
+                // Add condition: service_healthy for services with healthchecks
+                if (['postgresql', 'mongodb', 'mysql', 'redis', 'rabbitmq', 'elasticsearch', 'opensearch'].includes(dep)) {
+                    compose += `\n        condition: service_healthy`;
+                } else {
+                    compose += `\n        condition: service_started`;
+                }
             });
         }
 
@@ -771,23 +824,35 @@ CMD ["npm", "start"]`;
 
   nginx:
     image: nginx:alpine
+    container_name: app-nginx
     ports:
       - "80:80"
+      - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-    depends_on:
-      - frontend
-      - backend
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - app-network
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
 `;
 
-        // Add databases
+        // Add databases with proper health checks (CRITICAL FIX #7)
         if (projectStructure.databases && projectStructure.databases.length > 0) {
             if (projectStructure.databases.includes('postgresql')) {
                 compose += `
   postgresql:
     image: postgres:15-alpine
+    container_name: app-postgres
     environment:
       POSTGRES_DB: \${POSTGRES_DB:-myapp_db}
       POSTGRES_USER: \${POSTGRES_USER:-postgres}
@@ -797,17 +862,20 @@ CMD ["npm", "start"]`;
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER:-postgres} -d \${POSTGRES_DB:-myapp_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    restart: unless-stopped
 `;
             }
 
             if (projectStructure.databases.includes('mongodb')) {
                 compose += `
   mongodb:
-    image: mongo:7
+    image: mongo:7-alpine
+    container_name: app-mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: \${MONGO_INITDB_ROOT_USERNAME:-root}
       MONGO_INITDB_ROOT_PASSWORD: \${MONGO_INITDB_ROOT_PASSWORD:-changeme}
@@ -820,13 +888,16 @@ CMD ["npm", "start"]`;
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
+    restart: unless-stopped
 `;
             }
 
             if (projectStructure.databases.includes('mysql')) {
                 compose += `
   mysql:
-    image: mysql:8.0
+    image: mysql:8.0-alpine
+    container_name: app-mysql
     environment:
       MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD:-rootchangeme}
       MYSQL_DATABASE: \${MYSQL_DATABASE:-myapp_db}
@@ -837,29 +908,34 @@ CMD ["npm", "start"]`;
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "\${MYSQL_USER:-myapp}", "-p\${MYSQL_PASSWORD:-changeme}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    restart: unless-stopped
 `;
             }
         }
 
-        // Add Redis if needed
+        // Add Redis if needed (CRITICAL FIX #7: Health checks)
         if (projectStructure.cacheLayer === 'redis' || projectStructure.databases?.includes('redis')) {
             compose += `
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    container_name: app-redis
+    command: redis-server --appendonly yes --requirepass \${REDIS_PASSWORD:-changeme}
     volumes:
       - redis_data:/data
     networks:
       - app-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    restart: unless-stopped
 `;
         }
 
@@ -868,8 +944,10 @@ CMD ["npm", "start"]`;
             compose += `
   memcached:
     image: memcached:alpine
+    container_name: app-memcached
     networks:
       - app-network
+    restart: unless-stopped
 `;
         }
 
@@ -878,6 +956,7 @@ CMD ["npm", "start"]`;
             compose += `
   rabbitmq:
     image: rabbitmq:3-management-alpine
+    container_name: app-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: \${RABBITMQ_DEFAULT_USER:-guest}
       RABBITMQ_DEFAULT_PASS: \${RABBITMQ_DEFAULT_PASS:-guest}
@@ -892,6 +971,8 @@ CMD ["npm", "start"]`;
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
+    restart: unless-stopped
 `;
         }
 
@@ -899,26 +980,38 @@ CMD ["npm", "start"]`;
         if (projectStructure.messageQueue === 'kafka') {
             compose += `
   zookeeper:
-    image: confluentinc/cp-zookeeper:latest
+    image: confluentinc/cp-zookeeper:7.0.0-alpine
+    container_name: app-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     networks:
       - app-network
+    restart: unless-stopped
 
   kafka:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:7.0.0-alpine
+    container_name: app-kafka
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_started
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
     volumes:
       - kafka_data:/var/lib/kafka/data
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "kafka:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
 `;
         }
 
@@ -926,7 +1019,8 @@ CMD ["npm", "start"]`;
         if (projectStructure.searchEngine === 'elasticsearch') {
             compose += `
   elasticsearch:
-    image: elasticsearch:8.11.0
+    image: elasticsearch:8.11.0-alpine
+    container_name: app-elasticsearch
     environment:
       - discovery.type=single-node
       - ELASTIC_PASSWORD=\${ELASTIC_PASSWORD:-changeme}
@@ -940,6 +1034,8 @@ CMD ["npm", "start"]`;
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    restart: unless-stopped
 `;
         }
 
@@ -947,22 +1043,34 @@ CMD ["npm", "start"]`;
         if (projectStructure.searchEngine === 'opensearch') {
             compose += `
   opensearch:
-    image: opensearchproject/opensearch:latest
+    image: opensearchproject/opensearch:latest-alpine
+    container_name: app-opensearch
     environment:
       - discovery.type=single-node
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=\${OPENSEARCH_INITIAL_ADMIN_PASSWORD:-Admin123!}
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
     volumes:
       - opensearch_data:/usr/share/opensearch/data
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f https://localhost:9200/_cluster/health -k -u admin:Admin123! || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 `;
         }
 
-        // Networks
+        // Networks (CRITICAL FIX #8: Proper network configuration)
         compose += `
 networks:
   app-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 `;
 
         // Volumes
@@ -1188,6 +1296,75 @@ server {
             case 'mysql': return 'mysql:8.0';
             case 'mongodb': return 'mongo:7';
             default: return 'postgres:15-alpine';
+        }
+    }
+
+    // CRITICAL FIX for Parsing Errors: Proper escaping of special characters in environment variables
+    private escapeEnvVariable(value: string): string {
+        if (!value) return '';
+        
+        // CRITICAL FIX: Escape special characters that break YAML/Docker syntax
+        // Characters that need escaping in YAML values: quotes, colons, dashes, special chars
+        let escaped = value;
+        
+        // Escape backslashes first
+        escaped = escaped.replace(/\\/g, '\\\\');
+        
+        // Escape double quotes
+        escaped = escaped.replace(/"/g, '\\"');
+        
+        // If value contains special characters, wrap in quotes
+        if (/[:#@\[\]&*!|>'"`,{}\\]/.test(escaped)) {
+            // Quote the value if it contains special YAML characters
+            if (escaped.includes('"')) {
+                escaped = `'${escaped}'`;
+            } else {
+                escaped = `"${escaped}"`;
+            }
+        }
+        
+        return escaped;
+    }
+
+    // CRITICAL FIX for Parsing Errors: Validate docker-compose syntax before returning
+    private validateDockerComposeYAML(yaml: string): string {
+        try {
+            // Check if YAML is valid by basic structure validation
+            const lines = yaml.split('\n');
+            let inBlock = false;
+            let blockIndent = 0;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const trimmed = line.trim();
+                
+                // Skip empty lines and comments
+                if (!trimmed || trimmed.startsWith('#')) {
+                    continue;
+                }
+
+                // Check indentation consistency
+                const indent = line.search(/\S/);
+                
+                // Ensure proper YAML structure
+                if (trimmed.endsWith(':') && !trimmed.includes('|')) {
+                    // Key without value should be followed by indented content
+                    if (i < lines.length - 1) {
+                        const nextLine = lines[i + 1];
+                        const nextTrimmed = nextLine.trim();
+                        const nextIndent = nextLine.search(/\S/);
+                        
+                        if (nextTrimmed && nextIndent <= indent) {
+                            console.warn(`YAML indentation issue at line ${i + 1}: ${trimmed}`);
+                        }
+                    }
+                }
+            }
+
+            return yaml;
+        } catch (error) {
+            console.warn('YAML validation warning:', error);
+            return yaml;
         }
     }
 }
