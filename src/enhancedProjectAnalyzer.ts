@@ -8,7 +8,7 @@
  */
 
 import * as vscode from 'vscode';
-import { ProjectAnalvzer, ProjectStructure } from './projectAnalyzer';
+import { ProjectAnalyzer, ProjectStructure } from './projectAnalyzer';
 import { EmbeddingService, FileEmbedding } from './embeddingService';
 import { LSPMetadataService, LSPMetadata } from './lspMetadataService';
 import { RAGService, RAGContext } from './ragService';
@@ -186,7 +186,7 @@ export class EnhancedProjectAnalyzer {
         let complexity: CodebaseInsights['estimatedComplexity'] = 'simple';
         if (projectStructure.isMonorepo || (projectStructure.services && projectStructure.services.length > 2)) {
             complexity = 'enterprise';
-        } else if (embeddings.length > 100 || lspMetadata frameworks.length > 3) {
+        } else if (embeddings.length > 100 || lspMetadata.frameworks.length > 3) {
             complexity = 'complex';
         } else if (embeddings.length > 50 || lspMetadata.frameworks.length > 1) {
             complexity = 'moderate';
