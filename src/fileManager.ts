@@ -658,7 +658,8 @@ export class FileManager {
     }
 
     private generateMonorepoFrontendDockerfile(projectStructure: ProjectStructure): string {
-        return `FROM node:18-alpine
+        return `# Stage 1: Builder
+FROM node:18-alpine AS builder
 WORKDIR /app
 
 # Copy package files
@@ -673,11 +674,43 @@ RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
 # Copy source files
 COPY . .
 
-# Expose port
-EXPOSE 3000
+# Build for production
+RUN npm run build
 
-# Run dev server
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]`;
+# Stage 2: Nginx Runtime
+FROM nginx:alpine
+
+# Copy built application from builder
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/build /usr/share/nginx/html
+
+# Nginx configuration for SPA routing
+RUN echo 'server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+    
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}' > /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+
+# Run as non-root user
+USER nginx
+
+CMD ["nginx", "-g", "daemon off;"]`;
     }
 
     private generateMonorepoBackendDockerfile(projectStructure: ProjectStructure): string {

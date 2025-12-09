@@ -3,7 +3,7 @@ import * as path from 'path';
 import { FullStackDetector } from './frameworkDetector';
 import { BuildConfigDetector } from './buildConfigDetector';
 import { MonorepoDetector } from './monorepoDetector';
-import { DockerGeneratorFinal } from './dockerGeneratorAdvanced';
+import { DockerGenerator } from './dockerGeneratorAdvanced';
 import { SafeFileReader } from './safeFileReader';
 
 /**
@@ -47,7 +47,7 @@ export class EnhancedProjectAnalyzer {
       // Step 1: Detect all frameworks and technologies
       console.log('🔍 Detecting frameworks and technologies...');
       const frameworks = await FullStackDetector.detectAll(this.projectPath);
-      
+
       if (!frameworks.frontend?.length && !frameworks.backend?.length) {
         warnings.push('No frontend or backend frameworks detected');
         suggestions.push('Ensure package.json exists and contains framework dependencies');
@@ -56,7 +56,7 @@ export class EnhancedProjectAnalyzer {
       // Step 2: Detect monorepo structure
       console.log('🏗️  Detecting monorepo structure...');
       const monorepo = await MonorepoDetector.detectMonorepo(this.projectPath);
-      
+
       if (monorepo.isMonorepo) {
         console.log(`✅ Detected ${monorepo.type} monorepo with ${monorepo.workspaces.length} workspaces`);
       }
@@ -64,7 +64,7 @@ export class EnhancedProjectAnalyzer {
       // Step 3: Analyze build configuration
       console.log('⚙️  Analyzing build configuration...');
       const buildConfigs: any = {};
-      
+
       if (frameworks.frontend && frameworks.frontend.length > 0) {
         buildConfigs.frontend = await BuildConfigDetector.detectAllConfigs(
           this.projectPath,
@@ -86,7 +86,7 @@ export class EnhancedProjectAnalyzer {
       // Step 5: Validate generated configurations
       console.log('✔️  Validating configurations...');
       const { isValid, issues } = this.validateConfigurations(generatedFiles);
-      
+
       if (!isValid) {
         warnings.push(...issues);
       }
@@ -166,9 +166,15 @@ export class EnhancedProjectAnalyzer {
         framework: frameworks.backend?.[0]?.name || frameworks.frontend?.[0]?.name || 'Node.js'
       };
 
-      const generated = await DockerGeneratorFinal.generateAll(this.projectPath, config);
-      
-      return generated;
+      const dockerfile = DockerGenerator.generateDockerfile(config.framework, config);
+      const dockerCompose = DockerGenerator.generateDockerCompose(config.services, config.databases, config.messageQueues);
+      const nginx = DockerGenerator.generateNginxConfig();
+
+      return {
+        dockerfile,
+        dockerCompose,
+        nginx
+      };
     } catch (error) {
       console.error('Error generating Docker configs:', error);
       return {
