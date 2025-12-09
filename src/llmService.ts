@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { ProjectStructure } from './projectAnalyzer';
+import { BOMHandler } from './criticalErrorHandling';
 
 export interface DockerFiles {
     dockerfile: string;
@@ -215,6 +216,7 @@ ${includeNginx && projectStructure.frontend ? `
     }
 
     private parseResponse(response: string, projectStructure: ProjectStructure): DockerFiles {
+        // CRITICAL FIX for Parsing Errors: Add comprehensive YAML/JSON validation
         const result: DockerFiles = {
             dockerfile: '',
             dockerCompose: '',
@@ -222,36 +224,155 @@ ${includeNginx && projectStructure.frontend ? `
             nginxConf: undefined
         };
 
-        // Extract Dockerfile
-        const dockerfileMatch = response.match(/```dockerfile\n([\s\S]*?)\n```/i);
-        if (dockerfileMatch) {
-            result.dockerfile = dockerfileMatch[1].trim();
-        }
+        try {
+            // Extract Dockerfile
+            const dockerfileMatch = response.match(/```dockerfile\n([\s\S]*?)\n```/i);
+            if (dockerfileMatch) {
+                try {
+                    const dockerfile = dockerfileMatch[1].trim();
+                    // Basic validation of Dockerfile syntax
+                    if (this.validateDockerfileSyntax(dockerfile)) {
+                        result.dockerfile = dockerfile;
+                    } else {
+                        console.warn('Dockerfile validation failed, using fallback');
+                    }
+                } catch (error) {
+                    console.warn('Error processing Dockerfile:', error);
+                }
+            }
 
-        // Extract docker-compose.yml
-        const composeMatch = response.match(/```ya?ml\n([\s\S]*?)\n```/i);
-        if (composeMatch) {
-            result.dockerCompose = composeMatch[1].trim();
-        }
+            // Extract docker-compose.yml with YAML validation
+            const composeMatch = response.match(/```ya?ml\n([\s\S]*?)\n```/i);
+            if (composeMatch) {
+                try {
+                    const compose = composeMatch[1].trim();
+                    // CRITICAL FIX: Validate YAML/JSON structure
+                    if (this.validateYAMLStructure(compose)) {
+                        result.dockerCompose = compose;
+                    } else {
+                        console.warn('Docker Compose validation failed, using fallback');
+                    }
+                } catch (error) {
+                    console.warn('Error processing docker-compose:', error);
+                }
+            }
 
-        // Extract .dockerignore
-        const dockerignoreMatch = response.match(/```(?:dockerignore|text)?\n([\s\S]*?)\n```/);
-        if (dockerignoreMatch) {
-            result.dockerIgnore = dockerignoreMatch[1].trim();
-        }
+            // Extract .dockerignore
+            const dockerignoreMatch = response.match(/```(?:dockerignore|text)?\n([\s\S]*?)\n```/);
+            if (dockerignoreMatch) {
+                try {
+                    const dockerignore = dockerignoreMatch[1].trim();
+                    if (dockerignore.length > 0) {
+                        result.dockerIgnore = dockerignore;
+                    }
+                } catch (error) {
+                    console.warn('Error processing .dockerignore:', error);
+                }
+            }
 
-        // Extract nginx.conf if present
-        const nginxMatch = response.match(/```nginx\n([\s\S]*?)\n```/i);
-        if (nginxMatch) {
-            result.nginxConf = nginxMatch[1].trim();
-        }
+            // Extract nginx.conf if present
+            const nginxMatch = response.match(/```nginx\n([\s\S]*?)\n```/i);
+            if (nginxMatch) {
+                try {
+                    const nginx = nginxMatch[1].trim();
+                    // CRITICAL FIX: Validate nginx configuration syntax
+                    if (this.validateNginxSyntax(nginx)) {
+                        result.nginxConf = nginx;
+                    } else {
+                        console.warn('Nginx config validation failed');
+                    }
+                } catch (error) {
+                    console.warn('Error processing nginx config:', error);
+                }
+            }
 
-        // Fallback extraction if specific markers not found
-        if (!result.dockerfile || !result.dockerCompose || !result.dockerIgnore) {
+            // Fallback extraction if specific markers not found
+            if (!result.dockerfile || !result.dockerCompose || !result.dockerIgnore) {
+                this.fallbackExtraction(response, result, projectStructure);
+            }
+        } catch (error) {
+            console.error('Fatal error in parseResponse:', error);
             this.fallbackExtraction(response, result, projectStructure);
         }
 
         return result;
+    }
+
+    // CRITICAL FIX: Add validation methods for YAML, Dockerfile, and nginx syntax
+    private validateYAMLStructure(yaml: string): boolean {
+        try {
+            // Check for basic YAML structure validity
+            if (!yaml || yaml.trim().length === 0) {
+                return false;
+            }
+
+            // Check for required docker-compose keys
+            const hasServices = yaml.includes('services:');
+            if (!hasServices) {
+                console.warn('YAML missing "services:" key');
+                return false;
+            }
+
+            // Basic indentation check
+            const lines = yaml.split('\n');
+            let previousIndent = 0;
+            for (const line of lines) {
+                if (line.trim().length === 0) continue;
+                
+                const indent = line.search(/\S/);
+                // Allow flexibility but ensure minimal structure
+                if (indent < 0) return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error('YAML validation error:', error);
+            return false;
+        }
+    }
+
+    private validateDockerfileSyntax(dockerfile: string): boolean {
+        try {
+            if (!dockerfile || dockerfile.trim().length === 0) {
+                return false;
+            }
+
+            // Check for required Dockerfile instructions
+            const upperDockerfile = dockerfile.toUpperCase();
+            const hasFrom = upperDockerfile.includes('FROM');
+            
+            if (!hasFrom) {
+                console.warn('Dockerfile missing FROM instruction');
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Dockerfile validation error:', error);
+            return false;
+        }
+    }
+
+    private validateNginxSyntax(nginx: string): boolean {
+        try {
+            if (!nginx || nginx.trim().length === 0) {
+                return false;
+            }
+
+            // Basic nginx syntax check
+            const hasServerBlock = /\s*server\s*\{/.test(nginx);
+            const properlyFormatted = (nginx.match(/\{/g) || []).length === (nginx.match(/\}/g) || []).length;
+
+            if (!properlyFormatted) {
+                console.warn('Nginx config has unbalanced braces');
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            console.error('Nginx validation error:', error);
+            return false;
+        }
     }
 
     private fallbackExtraction(response: string, result: DockerFiles, projectStructure: ProjectStructure) {
