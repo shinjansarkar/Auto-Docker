@@ -45,6 +45,7 @@ test-projects/
 test-results/
 stress-test-projects/
 stress-test-results/
+test-workspace-*/
 
 # Test scripts (local only - not for marketplace)
 comprehensive-test.js
@@ -52,6 +53,12 @@ integration-test.js
 stress-test.js
 run-all-tests.sh
 run-tests.sh
+run-tests-standalone.js
+
+# Test reports and documentation (generated)
+TEST-EXECUTION-REPORT.md
+TEST-IMPLEMENTATION-REPORT.md
+FINAL-TEST-SUMMARY.md
 
 # ============================================
 # INTERNAL DOCUMENTATION (Development Only)
@@ -61,12 +68,14 @@ Failure-Analysis.md
 IMPLEMENTATION.md
 3-DAY-LAUNCH-PLAN.md
 
-# Test documentation
+Test documentation
 TEST_SUMMARY.md
 TESTING.md
 README_TESTING.md
 STRESS_TEST_RESULTS.md
 TEST-GUIDE.md
+/src/test
+
 
 # Internal reports and summaries
 PUBLIC-RELEASE-REPORT.md
@@ -130,3 +139,5 @@ coverage/
 
 
 /agent
+
+/docs
