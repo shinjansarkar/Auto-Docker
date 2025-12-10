@@ -48,6 +48,7 @@ integration-test.js
 stress-test.js
 run-all-tests.sh
 run-tests.sh
+run-tests-standalone.js
 
 # ============================================
 # DOCUMENTATION (Development Only)
@@ -72,6 +73,10 @@ TEST-GUIDE.md
 FINAL-TEST-REPORT.md
 MONOREPO-TESTING.md
 QUICKSTART-TESTING.md
+TEST-EXECUTION-REPORT.md
+TEST-IMPLEMENTATION-REPORT.md
+FINAL-TEST-SUMMARY.md
+FILE-MANAGEMENT-GUIDE.md
 
 # Internal summaries
 IMPLEMENTATION-SUMMARY.md
