@@ -2,6 +2,7 @@
 
 [![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/shinjansarkar/Auto-Docker?style=social)](https://github.com/shinjansarkar/Auto-Docker)
 
 An enterprise-grade VS Code extension that automatically generates production-ready Docker configurations by intelligently analyzing your project structure using AI (GPT/Gemini) integration. Supports ANY fullstack application with advanced service detection!
 
@@ -19,7 +20,7 @@ An enterprise-grade VS Code extension that automatically generates production-re
 - **🔄 WebSocket Support**: Built-in WebSocket configuration for real-time apps
 - **📊 Advanced Services**: Auto-detects and configures message queues, caching, search engines
 
-## 🎯 What's New in v2.5.2
+## 🎯 What's New in v2.6.1
 
 ### 🚀 Enterprise-Grade Features
 - ✅ **Single-Folder Fullstack Detection**: Detects when frontend and backend coexist in same folder
@@ -85,6 +86,7 @@ An enterprise-grade VS Code extension that automatically generates production-re
    - **Google Gemini**: Get API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
 ## 🎯 Usage
+
 ### For Monorepo/Fullstack Projects
 ```
 project/
@@ -286,7 +288,7 @@ The generated `.env.example` includes ALL detected services:
 
 ## 📊 Feature Comparison
 
-| Feature | v2.5.0 | Other Extensions |
+| Feature | v2.6.1 | Other Extensions |
 |---------|--------|------------------|
 | **AI-Powered Generation** | ✅ GPT-4 & Gemini | ❌ Templates only |
 | **Monorepo Support** | ✅ Separate Dockerfiles | ⚠️ Limited |
@@ -312,7 +314,7 @@ Contributions are welcome! This is an open-source project.
 - 🌍 Internationalization (i18n)
 
 ### How to Contribute
-1. Fork the repository
+1. Fork the repository: [https://github.com/shinjansarkar/Auto-Docker](https://github.com/shinjansarkar/Auto-Docker)
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
@@ -331,19 +333,19 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🌟 Roadmap
 
-### v2.6.0 (Planned)
-- [ ] Kubernetes manifest generation
-- [ ] Docker Swarm support
-- [ ] CI/CD pipeline generation (GitHub Actions, GitLab CI)
-- [ ] Performance monitoring integration (Prometheus, Grafana)
-- [ ] Service mesh support (Istio, Linkerd)
+### v2.7.0 (Planned)
+- Kubernetes manifest generation
+- Docker Swarm support
+- CI/CD pipeline generation (GitHub Actions, GitLab CI)
+- Performance monitoring integration (Prometheus, Grafana)
+- Service mesh support (Istio, Linkerd)
 
 ### v3.0.0 (Future)
-- [ ] Visual editor for docker-compose
-- [ ] Cost estimation for cloud deployments
-- [ ] Security scanning integration
-- [ ] Multi-environment configuration (dev, staging, prod)
-- [ ] Terraform/Infrastructure as Code generation
+- Visual editor for docker-compose
+- Cost estimation for cloud deployments
+- Security scanning integration
+- Multi-environment configuration (dev, staging, prod)
+- Terraform/Infrastructure as Code generation
 
 ## 🛠️ Development Setup
 
@@ -379,7 +381,7 @@ npm run watch
 
 # Option 3: Package and install locally
 npm run package
-code --install-extension auto-docker-extension-1.0.0.vsix
+code --install-extension auto-docker-extension-2.6.1.vsix
 ```
 
 ### Available Scripts
@@ -403,10 +405,11 @@ Auto-Docker/
 │   ├── projectAnalyzer.ts   # Intelligent project structure analysis
 │   ├── llmService.ts        # AI integration (GPT-4/Gemini) + fallback templates
 │   ├── fileManager.ts       # File operations, preview, and monorepo handling
-│   └── types.d.ts           # TypeScript type definitions
+│   └── types.ts             # TypeScript type definitions
 ├── dist/                    # Compiled JavaScript output (esbuild)
 ├── images/                  # Extension icons and assets
 │   └── docker-icon.png      # Extension icon
+├── test-automation/         # Test suite
 ├── package.json             # Extension manifest and dependencies
 ├── tsconfig.json            # TypeScript configuration
 ├── esbuild.js               # Build configuration
@@ -450,6 +453,5 @@ Auto-Docker/
 
 **Happy Dockerizing! 🐳✨**
 
-[![GitHub stars](https://img.shields.io/github/stars/shinjansarkar/Auto-Docker?style=social)](https://github.com/shinjansarkar/Auto-Docker)
-[![VS Code Installs](https://img.shields.io/visual-studio-marketplace/i/auto-docker-publisher.auto-docker-extension)](https://marketplace.visualstudio.com/)
-[![Rating](https://img.shields.io/visual-studio-marketplace/r/auto-docker-publisher.auto-docker-extension)](https://marketplace.visualstudio.com/)
+[![VS Code Installs](https://img.shields.io/visual-studio-marketplace/i/ShinjanSarkar.auto-docker-extension)](https://marketplace.visualstudio.com/)
+[![Rating](https://img.shields.io/visual-studio-marketplace/r/ShinjanSarkar.auto-docker-extension)](https://marketplace.visualstudio.com/)

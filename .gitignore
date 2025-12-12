@@ -136,8 +136,16 @@ coverage/
 .eslintcache
 .node_repl_history
 
+# Test automation scripts (keep in version control)
+# test-automation/ folder contains core testing utilities
 
+# Test automation generated artifacts (exclude from version control)
+/test-automation/generated-projects/
+/test-automation/results/
+/test-automation
 
+# Agent logs
 /agent
 
+# Internal documentation (development only)
 /docs

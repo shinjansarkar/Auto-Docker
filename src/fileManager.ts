@@ -36,22 +36,13 @@ export class FileManager {
             { name: '.dockerignore', content: dockerFiles.dockerIgnore }
         ];
 
+        // Always write nginx.conf if provided (needed for frontend projects with nginx)
         if (dockerFiles.nginxConf) {
             filesToWrite.push({ name: 'nginx.conf', content: dockerFiles.nginxConf });
         }
 
-        // Generate comprehensive .env.example based on detected services
-        const envExamplePath = path.join(this.workspaceRoot, '.env.example');
-        const envExampleUri = vscode.Uri.file(envExamplePath);
-
-        try {
-            await vscode.workspace.fs.stat(envExampleUri);
-            // .env.example already exists, don't overwrite
-        } catch {
-            // Create comprehensive .env.example
-            const envExampleContent = this.generateComprehensiveEnv(projectStructure || {} as ProjectStructure);
-            filesToWrite.push({ name: '.env.example', content: envExampleContent });
-        }
+        // REMOVED: .env.example generation (Issue #21 fix)
+        // The extension will NOT generate .env.example files anymore
 
         const existingFiles: string[] = [];
         const newFiles: string[] = [];
@@ -1335,17 +1326,17 @@ server {
     // CRITICAL FIX for Parsing Errors: Proper escaping of special characters in environment variables
     private escapeEnvVariable(value: string): string {
         if (!value) return '';
-        
+
         // CRITICAL FIX: Escape special characters that break YAML/Docker syntax
         // Characters that need escaping in YAML values: quotes, colons, dashes, special chars
         let escaped = value;
-        
+
         // Escape backslashes first
         escaped = escaped.replace(/\\/g, '\\\\');
-        
+
         // Escape double quotes
         escaped = escaped.replace(/"/g, '\\"');
-        
+
         // If value contains special characters, wrap in quotes
         if (/[:#@\[\]&*!|>'"`,{}\\]/.test(escaped)) {
             // Quote the value if it contains special YAML characters
@@ -1355,7 +1346,7 @@ server {
                 escaped = `"${escaped}"`;
             }
         }
-        
+
         return escaped;
     }
 
@@ -1370,7 +1361,7 @@ server {
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i];
                 const trimmed = line.trim();
-                
+
                 // Skip empty lines and comments
                 if (!trimmed || trimmed.startsWith('#')) {
                     continue;
@@ -1378,7 +1369,7 @@ server {
 
                 // Check indentation consistency
                 const indent = line.search(/\S/);
-                
+
                 // Ensure proper YAML structure
                 if (trimmed.endsWith(':') && !trimmed.includes('|')) {
                     // Key without value should be followed by indented content
@@ -1386,7 +1377,7 @@ server {
                         const nextLine = lines[i + 1];
                         const nextTrimmed = nextLine.trim();
                         const nextIndent = nextLine.search(/\S/);
-                        
+
                         if (nextTrimmed && nextIndent <= indent) {
                             console.warn(`YAML indentation issue at line ${i + 1}: ${trimmed}`);
                         }

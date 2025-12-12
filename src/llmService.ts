@@ -3,6 +3,8 @@ import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { ProjectStructure } from './projectAnalyzer';
 import { BOMHandler } from './criticalErrorHandling';
+import { ComprehensiveAnalysis } from './comprehensiveAnalyzer';
+import { createAdvancedProductionPrompt } from './advancedProductionPrompt';
 
 export interface DockerFiles {
     dockerfile: string;
@@ -21,7 +23,7 @@ export class LLMService {
 
     private initializeClients() {
         const config = vscode.workspace.getConfiguration('autoDocker');
-        
+
         const openaiKey = config.get<string>('openaiApiKey');
         if (openaiKey) {
             this.openaiClient = new OpenAI({
@@ -37,26 +39,345 @@ export class LLMService {
 
     async generateDockerFiles(projectStructure: ProjectStructure): Promise<DockerFiles> {
         const config = vscode.workspace.getConfiguration('autoDocker');
-        const provider = config.get<string>('apiProvider', 'openai');
-
+        const preferredProvider = config.get<string>('apiProvider', 'openai');
         const prompt = this.createPrompt(projectStructure);
 
-        try {
-            let response: string;
+        // Try providers in order: preferred first, then fallback to others
+        const providers: Array<{ name: string; fn: () => Promise<string> }> = [];
 
-            if (provider === 'openai' && this.openaiClient) {
-                response = await this.callOpenAI(prompt);
-            } else if (provider === 'gemini' && this.geminiClient) {
-                response = await this.callGemini(prompt);
-            } else {
-                throw new Error(`${provider} API is not configured. Please set up API keys in settings.`);
-            }
-
-            return this.parseResponse(response, projectStructure);
-        } catch (error) {
-            console.error('LLM API Error:', error);
-            throw new Error(`Failed to generate Docker files: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        // Add preferred provider first
+        if (preferredProvider === 'openai' && this.openaiClient) {
+            providers.push({ name: 'OpenAI', fn: () => this.callOpenAIWithRetry(prompt) });
+        } else if (preferredProvider === 'gemini' && this.geminiClient) {
+            providers.push({ name: 'Gemini', fn: () => this.callGeminiWithRetry(prompt) });
+        } else if (preferredProvider === 'anthropic') {
+            providers.push({ name: 'Anthropic Claude', fn: () => this.callAnthropicWithRetry(prompt) });
         }
+
+        // Add fallback providers
+        if (preferredProvider !== 'openai' && this.openaiClient) {
+            providers.push({ name: 'OpenAI', fn: () => this.callOpenAIWithRetry(prompt) });
+        }
+        if (preferredProvider !== 'gemini' && this.geminiClient) {
+            providers.push({ name: 'Gemini', fn: () => this.callGeminiWithRetry(prompt) });
+        }
+        if (preferredProvider !== 'anthropic') {
+            providers.push({ name: 'Anthropic Claude', fn: () => this.callAnthropicWithRetry(prompt) });
+        }
+
+        let lastError: Error | null = null;
+
+        // Try each provider
+        for (const provider of providers) {
+            try {
+                console.log(`🔄 Attempting ${provider.name}...`);
+                vscode.window.showInformationMessage(`🔄 Generating with ${provider.name}...`);
+
+                const response = await provider.fn();
+                vscode.window.showInformationMessage(`✅ Successfully generated with ${provider.name}!`);
+                return this.parseResponse(response, projectStructure);
+            } catch (error: any) {
+                lastError = error;
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                console.error(`❌ ${provider.name} failed:`, errorMsg);
+
+                // Check if it's a quota/rate limit error
+                if (this.isQuotaError(error)) {
+                    vscode.window.showWarningMessage(
+                        `⚠️ ${provider.name} quota exceeded. Trying next provider...`
+                    );
+                } else if (this.isAuthError(error)) {
+                    vscode.window.showWarningMessage(
+                        `⚠️ ${provider.name} authentication failed. Trying next provider...`
+                    );
+                } else {
+                    vscode.window.showWarningMessage(
+                        `⚠️ ${provider.name} error: ${errorMsg}. Trying next provider...`
+                    );
+                }
+
+                // Continue to next provider
+                continue;
+            }
+        }
+
+        // All providers failed, use fallback templates
+        console.log('⚠️ All API providers failed. Using fallback templates.');
+        vscode.window.showWarningMessage(
+            '⚠️ All APIs temporarily unavailable. Using built-in templates. Some customization may be reduced.'
+        );
+
+        return this.generateFallbackDockerFiles(projectStructure);
+    }
+
+    /**
+     * Generate Docker files from comprehensive codebase analysis
+     * Sends complete structured analysis to AI for maximum accuracy
+     */
+    async generateFromComprehensiveAnalysis(analysis: ComprehensiveAnalysis): Promise<DockerFiles> {
+        const config = vscode.workspace.getConfiguration('autoDocker');
+        const preferredProvider = config.get<string>('apiProvider', 'gemini'); // Default to Gemini for structured data
+
+        // Create structured prompt with comprehensive analysis (Advanced Production Generator)
+        const prompt = createAdvancedProductionPrompt(analysis);
+
+        // Try providers in order
+        const providers: Array<{ name: string; fn: () => Promise<string> }> = [];
+
+        if (preferredProvider === 'gemini' && this.geminiClient) {
+            providers.push({ name: 'Gemini', fn: () => this.callGeminiWithRetry(prompt) });
+        } else if (preferredProvider === 'openai' && this.openaiClient) {
+            providers.push({ name: 'OpenAI', fn: () => this.callOpenAIWithRetry(prompt) });
+        }
+
+        // Add fallback providers
+        if (preferredProvider !== 'gemini' && this.geminiClient) {
+            providers.push({ name: 'Gemini', fn: () => this.callGeminiWithRetry(prompt) });
+        }
+        if (preferredProvider !== 'openai' && this.openaiClient) {
+            providers.push({ name: 'OpenAI', fn: () => this.callOpenAIWithRetry(prompt) });
+        }
+
+        let lastError: Error | null = null;
+
+        for (const provider of providers) {
+            try {
+                console.log(`🔄 Generating with ${provider.name} using comprehensive analysis...`);
+                const response = await provider.fn();
+                console.log(`✅ Successfully generated with ${provider.name}!`);
+
+                // Convert analysis to ProjectStructure for parsing compatibility
+                const projectStructure = this.convertAnalysisToProjectStructure(analysis);
+                return this.parseResponse(response, projectStructure);
+            } catch (error: any) {
+                lastError = error;
+                console.error(`❌ ${provider.name} failed:`, error);
+                continue;
+            }
+        }
+
+        // Fallback
+        console.log('⚠️ All AI providers failed. Using fallback templates.');
+        const projectStructure = this.convertAnalysisToProjectStructure(analysis);
+        return this.generateFallbackDockerFiles(projectStructure);
+    }
+
+    /**
+     * Create comprehensive prompt with full structured analysis
+     */
+    private createComprehensivePrompt(analysis: ComprehensiveAnalysis): string {
+        const hasBackend = analysis.backends.length > 0;
+        const hasFrontend = analysis.frontends.length > 0;
+        const isMonorepo = analysis.isMonorepo;
+
+        return `
+# COMPREHENSIVE CODEBASE ANALYSIS FOR DOCKER GENERATION
+
+## PROJECT STRUCTURE
+- **Project Root**: ${analysis.projectRoot}
+- **Is Monorepo**: ${isMonorepo}
+- **Workspaces**: ${analysis.workspaces?.join(', ') || 'N/A'}
+
+## FRONTEND DETECTION
+${hasFrontend ? analysis.frontends.map((fe, i) => `
+### Frontend #${i + 1}
+- **Path**: ${fe.path}
+- **Framework**: ${fe.framework}${fe.variant ? ` (${fe.variant})` : ''}
+- **Version**: ${fe.version || 'latest'}
+- **Package Manager**: ${fe.packageManager}
+- **Build Tool**: ${fe.buildTool || 'N/A'}
+- **Build Command**: ${fe.buildCommand || 'npm run build'}
+- **Output Folder**: **${fe.outputFolder}** ⚠️ CRITICAL - USE THIS EXACT FOLDER
+- **Port**: ${fe.port || 3000}
+- **TypeScript**: ${fe.hasTypeScript}
+- **Environment Files**: ${fe.envFiles.join(', ') || 'None'}
+- **Dependencies**: ${Object.keys(fe.dependencies).slice(0, 10).join(', ')}
+`).join('\n') : '❌ NO FRONTEND DETECTED'}
+
+## BACKEND DETECTION
+${hasBackend ? analysis.backends.map((be, i) => `
+### Backend #${i + 1}
+- **Path**: ${be.path}
+- **Framework**: ${be.framework}
+- **Language**: ${be.language}
+- **Version**: ${be.version || 'latest'}
+- **Package Manager**: ${be.packageManager || 'N/A'}
+- **Main File**: ${be.mainFile || 'N/A'}
+- **Port**: ${be.port || 8000}
+- **Has Tests**: ${be.hasTests}
+- **Environment Files**: ${be.envFiles.join(', ') || 'None'}
+`).join('\n') : '❌ NO BACKEND DETECTED'}
+
+## DATABASE DETECTION
+${analysis.databases.length > 0 ? analysis.databases.map(db => `- **${db.type}**${db.version ? ` (${db.version})` : ''}`).join('\n') : '❌ NO DATABASE DETECTED'}
+
+## ADDITIONAL SERVICES
+${Object.keys(analysis.services).length > 0 ? Object.entries(analysis.services).map(([key, value]) => `- **${key}**: ${JSON.stringify(value)}`).join('\n') : 'None'}
+
+## BUILD TOOLS & MONOREPO
+${Object.keys(analysis.buildTools).length > 0 ? Object.entries(analysis.buildTools).map(([key, value]) => `- **${key}**: ${JSON.stringify(value)}`).join('\n') : 'None'}
+
+## ENVIRONMENT VARIABLES
+- **Files Found**: ${analysis.environmentVariables.files.join(', ') || 'None'}
+- **Variables Count**: ${Object.keys(analysis.environmentVariables.variables).length}
+- **Sample Variables**: ${Object.keys(analysis.environmentVariables.variables).slice(0, 10).join(', ')}
+
+## EXISTING DOCKER FILES
+${Object.entries(analysis.existingDockerFiles).map(([key, value]) => `- **${key}**: ${value || 'Not found'}`).join('\n')}
+
+## SPECIAL CONFIGURATIONS
+- **Prisma**: ${analysis.specialConfigs.hasPrisma}
+- **GraphQL**: ${analysis.specialConfigs.hasGraphQL}
+- **WebSocket**: ${analysis.specialConfigs.hasWebSocket}
+- **Authentication**: ${analysis.specialConfigs.hasAuth}
+- **ORM**: ${analysis.specialConfigs.hasORM}${analysis.specialConfigs.ormType ? ` (${analysis.specialConfigs.ormType})` : ''}
+
+## FILE STRUCTURE
+- **Source Dir**: ${analysis.fileStructure.srcDir || 'N/A'}
+- **Public Dir**: ${analysis.fileStructure.publicDir || 'N/A'}
+- **Build Dir**: ${analysis.fileStructure.buildDir || 'N/A'}
+- **Test Dir**: ${analysis.fileStructure.testDir || 'N/A'}
+
+---
+
+# 🚨 CRITICAL RULES FOR DOCKER FILE GENERATION
+
+## RULE #1: NGINX CONFIGURATION MUST BE A SEPARATE FILE
+❌ **NEVER** put nginx.conf content inside the Dockerfile
+✅ **ALWAYS** generate nginx.conf as a SEPARATE file
+✅ Reference it in Dockerfile with: COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+## RULE #2: USE EXACT OUTPUT FOLDERS DETECTED
+${hasFrontend ? analysis.frontends.map(fe => `- For **${fe.framework}** at **${fe.path}**: Use **${fe.outputFolder}** directory`).join('\n') : ''}
+
+## RULE #3: FRONTEND-ONLY vs FULLSTACK NGINX
+${!hasBackend ? `
+🔴 **FRONTEND-ONLY PROJECT**
+- Generate nginx.conf with ONLY static file serving
+- Include try_files for SPA routing
+- **NO** proxy_pass or backend proxy configuration
+- **NO** backend service in docker-compose.yml
+` : `
+🟢 **FULLSTACK PROJECT**
+- Generate nginx.conf with static serving + API proxy
+- Add proxy_pass for /api/ routes to backend
+- Include both frontend and backend services in docker-compose.yml
+`}
+
+## RULE #4: MONOREPO HANDLING
+${isMonorepo ? `
+🟠 **MONOREPO DETECTED**
+- Generate separate Dockerfiles for each service
+- Place Dockerfile in each service directory
+- Generate root-level docker-compose.yml with all services
+- Use correct context paths for each service
+` : ''}
+
+## RULE #5: PACKAGE MANAGER DETECTION
+${hasFrontend ? analysis.frontends.map(fe => `- **${fe.path}**: Use **${fe.packageManager}** with appropriate install command`).join('\n') : ''}
+
+## RULE #6: DO NOT GENERATE .env.example
+❌ **NEVER** generate .env.example file
+✅ Reference existing .env files in docker-compose.yml if detected
+
+## RULE #7: MULTI-STAGE BUILDS
+- Use multi-stage builds for ALL frontend projects
+- Stage 1: node:20-alpine AS builder (build process)
+- Stage 2: nginx:alpine (production serve)
+
+## RULE #8: BACKEND FRAMEWORKS
+${hasBackend ? analysis.backends.map(be => {
+            if (be.language === 'python') {
+                if (be.framework.includes('fastapi')) {
+                    return `- **FastAPI**: Install uvicorn, use CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]`;
+                } else if (be.framework.includes('django')) {
+                    return `- **Django**: Install gunicorn, use CMD ["gunicorn", "wsgi:application", "--bind", "0.0.0.0:8000"]`;
+                } else if (be.framework.includes('flask')) {
+                    return `- **Flask**: Install gunicorn, use CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]`;
+                }
+            }
+            return `- **${be.framework}**: Standard ${be.language} setup`;
+        }).join('\n') : 'N/A'}
+    }
+
+---
+
+# 📦 REQUIRED OUTPUT
+
+Generate the following files:
+
+1. ** Dockerfile ** (or multiple if monorepo)
+    2. ** docker - compose.yml **
+        3. **.dockerignore **
+        4. ** nginx.conf ** (if frontend exists and NOT SSR framework like Next.js / Nuxt / SvelteKit)
+
+** FORMAT **: Use code blocks with appropriate language tags
+    - dockerfile
+    - yaml
+    - text(for .dockerignore)
+    - nginx(for nginx.conf)
+
+** IMPORTANT **: Return ONLY the code blocks, no explanatory text before or after.
+`;
+    }
+
+    /**
+     * Convert ComprehensiveAnalysis to ProjectStructure for compatibility
+     */
+    private convertAnalysisToProjectStructure(analysis: ComprehensiveAnalysis): ProjectStructure {
+        const hasFrontend = analysis.frontends.length > 0;
+        const hasBackend = analysis.backends.length > 0;
+
+        let projectType = 'unknown';
+        if (hasFrontend && hasBackend) {
+            projectType = 'fullstack';
+        } else if (hasFrontend) {
+            projectType = 'frontend';
+        } else if (hasBackend) {
+            projectType = 'backend';
+        }
+
+        return {
+            projectType,
+            frontend: hasFrontend ? analysis.frontends[0].framework : undefined,
+            backend: hasBackend ? analysis.backends[0].framework : undefined,
+            database: analysis.databases.length > 0 ? analysis.databases[0].type : undefined,
+            databases: analysis.databases.map(db => db.type),
+            files: [],
+            dependencies: hasFrontend ? {
+                packageJson: {
+                    dependencies: analysis.frontends[0].dependencies,
+                    devDependencies: analysis.frontends[0].devDependencies
+                }
+            } : {},
+            hasMultiStage: hasFrontend,
+            description: `${projectType} application`,
+            hasEnvFile: analysis.environmentVariables.files.length > 0,
+            envVars: Object.keys(analysis.environmentVariables.variables),
+            packageManager: hasFrontend ? analysis.frontends[0].packageManager : undefined,
+            buildCommand: hasFrontend ? analysis.frontends[0].buildCommand : undefined,
+            outputDirectory: hasFrontend ? analysis.frontends[0].outputFolder : undefined,
+            isFrontendOnly: hasFrontend && !hasBackend,
+            isBackendOnly: !hasFrontend && hasBackend,
+            isFullstack: hasFrontend && hasBackend
+        } as ProjectStructure;
+    }
+
+    private isQuotaError(error: any): boolean {
+        const message = error instanceof Error ? error.message : String(error);
+        return message.includes('429') ||
+            message.includes('quota') ||
+            message.includes('Too Many Requests') ||
+            message.includes('rate limit');
+    }
+
+    private isAuthError(error: any): boolean {
+        const message = error instanceof Error ? error.message : String(error);
+        return message.includes('401') ||
+            message.includes('403') ||
+            message.includes('Unauthorized') ||
+            message.includes('invalid') ||
+            message.includes('not configured');
     }
 
     private async callOpenAI(prompt: string): Promise<string> {
@@ -97,8 +418,85 @@ export class LLMService {
         const generativeModel = this.geminiClient.getGenerativeModel({ model });
         const result = await generativeModel.generateContent(prompt);
         const response = await result.response;
-        
+
         return response.text();
+    }
+
+    private async callAnthropic(prompt: string): Promise<string> {
+        throw new Error('Anthropic API not yet configured in this build');
+    }
+
+    private async callOpenAIWithRetry(prompt: string, maxAttempts: number = 2): Promise<string> {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return await this.callOpenAI(prompt);
+            } catch (error: any) {
+                // Don't retry quota errors - go to next provider instead
+                if (this.isQuotaError(error)) {
+                    throw error;
+                }
+
+                // Retry transient errors with exponential backoff
+                if (attempt < maxAttempts) {
+                    const delayMs = Math.pow(2, attempt - 1) * 1000;
+                    console.log(`🔄 OpenAI retry attempt ${attempt}/${maxAttempts} in ${delayMs}ms...`);
+                    await this.delay(delayMs);
+                } else {
+                    throw error;
+                }
+            }
+        }
+        throw new Error('OpenAI call failed after retries');
+    }
+
+    private async callGeminiWithRetry(prompt: string, maxAttempts: number = 2): Promise<string> {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return await this.callGemini(prompt);
+            } catch (error: any) {
+                // Don't retry quota errors - go to next provider instead
+                if (this.isQuotaError(error)) {
+                    throw error;
+                }
+
+                // Retry transient errors with exponential backoff
+                if (attempt < maxAttempts) {
+                    const delayMs = Math.pow(2, attempt - 1) * 1000;
+                    console.log(`🔄 Gemini retry attempt ${attempt}/${maxAttempts} in ${delayMs}ms...`);
+                    await this.delay(delayMs);
+                } else {
+                    throw error;
+                }
+            }
+        }
+        throw new Error('Gemini call failed after retries');
+    }
+
+    private async callAnthropicWithRetry(prompt: string, maxAttempts: number = 2): Promise<string> {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return await this.callAnthropic(prompt);
+            } catch (error: any) {
+                // Don't retry quota errors - go to next provider instead
+                if (this.isQuotaError(error)) {
+                    throw error;
+                }
+
+                // Retry transient errors with exponential backoff
+                if (attempt < maxAttempts) {
+                    const delayMs = Math.pow(2, attempt - 1) * 1000;
+                    console.log(`🔄 Anthropic retry attempt ${attempt}/${maxAttempts} in ${delayMs}ms...`);
+                    await this.delay(delayMs);
+                } else {
+                    throw error;
+                }
+            }
+        }
+        throw new Error('Anthropic call failed after retries');
+    }
+
+    private delay(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     private createPrompt(projectStructure: ProjectStructure): string {
@@ -107,7 +505,7 @@ export class LLMService {
 
         // Detect build output directory
         const buildDir = this.getBuildDirectory(projectStructure);
-        
+
         // Detect Python framework
         const isPython = projectStructure.backend === 'flask' || projectStructure.backend === 'django' || projectStructure.backend === 'fastapi';
         const pythonFramework = projectStructure.backend;
@@ -117,7 +515,7 @@ export class LLMService {
         const isSvelteKit = projectStructure.frontend === 'sveltekit';
 
         return `
-Generate COMPACT, production-ready Docker files for this project:
+Generate PRODUCTION-READY Docker files following AutoDocker Policy:
 
 PROJECT: ${projectStructure.projectType}${projectStructure.frontend ? ` (${projectStructure.frontend})` : ''}${projectStructure.backend ? ` + ${projectStructure.backend}` : ''}${projectStructure.database ? ` + ${projectStructure.database}` : ''}
 
@@ -127,49 +525,70 @@ DEPS: ${JSON.stringify(projectStructure.dependencies?.packageJson?.dependencies 
 
 ${projectStructure.hasEnvFile ? `⚠️ .env file detected with variables: ${projectStructure.envVars?.slice(0, 10).join(', ')}` : ''}
 ${projectStructure.frontend?.includes('vite') ? `⚠️ CRITICAL: This is a VITE project - build output goes to ${buildDir} NOT build/` : ''}
-${isFrontend ? `⚠️ CRITICAL: Frontend app - Use nginx reverse proxy on port 80 pointing to app:3000` : ''}
-${isNextJs ? `⚠️ CRITICAL: Next.js - Use standalone output with node server.js, NOT nginx` : ''}
-${isNuxt ? `⚠️ CRITICAL: Nuxt - Use .output directory with node .output/server/index.mjs` : ''}
-${isSvelteKit ? `⚠️ CRITICAL: SvelteKit - Use node adapter with node build` : ''}
-${isPython && pythonFramework === 'flask' ? `⚠️ CRITICAL: Flask app - MUST install gunicorn and use CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]` : ''}
-${isPython && pythonFramework === 'django' ? `⚠️ CRITICAL: Django app - MUST install gunicorn and use CMD ["gunicorn", "wsgi:application"]` : ''}
-${isPython && pythonFramework === 'fastapi' ? `⚠️ CRITICAL: FastAPI app - MUST install uvicorn and use CMD ["uvicorn", "main:app"]` : ''}
 
-Generate ${projectStructure.hasMultiStage ? 'multi-stage' : 'single-stage'} Dockerfile, docker-compose.yml, .dockerignore${includeNginx && projectStructure.frontend ? ', nginx.conf' : ''}.
+🔴 POLICY RULES (MUST FOLLOW):
 
-REQUIREMENTS:
-- COMPACT files, no comments except essential ones
-- Use alpine/slim images for smaller size
-- Only necessary ports and volumes
-- Essential environment variables only
-- ${projectStructure.database ? `Include ${projectStructure.database} service` : 'No database needed'}
-${projectStructure.frontend?.includes('vite') ? `- MUST use ${buildDir} directory (Vite builds to ${buildDir})` : ''}
-${projectStructure.hasEnvFile ? `- Add env_file: .env in docker-compose.yml for app service` : ''}
-${isPython ? `- For Python: install production server (gunicorn/uvicorn) separately in Dockerfile` : ''}
-${isFrontend && !isNextJs && !isNuxt && !isSvelteKit ? `- For Static SPAs: Single nginx service with try_files for routing` : ''}
-${isFrontend && !isNextJs && !isNuxt && !isSvelteKit ? `- nginx.conf MUST include: try_files $uri $uri/ /index.html for SPA routing` : ''}
-- ALWAYS use fallback: if [ -f package-lock.json ]; npm ci; elif [ -f yarn.lock ]; yarn install; elif [ -f pnpm-lock.yaml ]; pnpm install; else npm install; fi
-- For static frontends: Single service (web or app) exposing port 80 with nginx
-- For SSR (Next.js/Nuxt/SvelteKit): Expose Node.js app on port 3000
-- Production-optimized, secure
+${isFrontend && !projectStructure.backend ? `
+=== FRONTEND-ONLY PROJECT ===
+- Use multi-stage Dockerfile: Stage 1 (node builder) -> Stage 2 (nginx:stable-alpine)
+- Generate SEPARATE nginx.conf file with production config
+- Dockerfile: COPY nginx.conf /etc/nginx/conf.d/default.conf
+- nginx.conf MUST include: try_files $uri $uri/ /index.html for SPA routing
+- docker-compose.yml: SINGLE service "web" on port 80 (NO separate nginx service)
+- NO /api/ proxy (no backend exists)
+` : ''}
+
+${projectStructure.backend && projectStructure.frontend ? `
+=== FULL-STACK PROJECT ===
+- Generate separate Dockerfiles for frontend and backend
+- docker-compose.yml: THREE services (frontend, backend, nginx)
+- nginx acts as reverse proxy: serves frontend static + proxies /api/ to backend
+- ONLY nginx exposes port 80 to host
+- Frontend and backend use internal networks (NO direct port exposure to host)
+- nginx.conf: location / -> frontend static, location /api/ -> proxy_pass http://backend:${projectStructure.backend === 'flask' ? '5000' : projectStructure.backend === 'django' || projectStructure.backend === 'fastapi' ? '8000' : '3000'}
+` : ''}
+
+${projectStructure.backend && !projectStructure.frontend ? `
+=== BACKEND-ONLY PROJECT ===
+- Single Dockerfile for backend
+- docker-compose.yml: ONE service "app" exposing backend port directly
+- NO nginx.conf needed (API-only)
+${isPython && pythonFramework === 'flask' ? `- Flask: MUST install gunicorn, CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]` : ''}
+${isPython && pythonFramework === 'django' ? `- Django: MUST install gunicorn, CMD ["gunicorn", "wsgi:application", "--bind", "0.0.0.0:8000"]` : ''}
+${isPython && pythonFramework === 'fastapi' ? `- FastAPI: MUST install uvicorn, CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]` : ''}
+` : ''}
+
+${isNextJs ? `⚠️ Next.js: Use standalone output, CMD ["node", "server.js"], port 3000 (NOT nginx)` : ''}
+${isNuxt ? `⚠️ Nuxt: Use .output directory, CMD ["node", ".output/server/index.mjs"], port 3000` : ''}
+${isSvelteKit ? `⚠️ SvelteKit: Use node adapter, CMD ["node", "build"], port 3000` : ''}
+
+PRODUCTION REQUIREMENTS:
+- Multi-stage builds for smaller images
+- Use alpine/slim base images
+- Non-root user when feasible
+- Healthchecks in docker-compose.yml
+- restart: unless-stopped
+- Security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy)
+${projectStructure.hasEnvFile ? `- Include env_file: .env in docker-compose.yml` : ''}
+${projectStructure.database ? `- Include ${projectStructure.database} service with named volumes` : ''}
 
 FORMAT (NO extra text, only code blocks):
 
 \`\`\`dockerfile
-# Minimal Dockerfile here
+# Production-ready multi-stage Dockerfile here
 \`\`\`
 
 \`\`\`yaml
-# Minimal docker-compose.yml here
+# Production docker-compose.yml here
 \`\`\`
 
 \`\`\`
 # Essential .dockerignore here
 \`\`\`
 
-${includeNginx && projectStructure.frontend ? `
+${isFrontend || (projectStructure.backend && projectStructure.frontend) ? `
 \`\`\`nginx
-# Minimal nginx.conf here
+# nginx.conf (for frontend or reverse proxy)
 \`\`\`
 ` : ''}`;
     }
@@ -318,7 +737,7 @@ ${includeNginx && projectStructure.frontend ? `
             let previousIndent = 0;
             for (const line of lines) {
                 if (line.trim().length === 0) continue;
-                
+
                 const indent = line.search(/\S/);
                 // Allow flexibility but ensure minimal structure
                 if (indent < 0) return false;
@@ -340,7 +759,7 @@ ${includeNginx && projectStructure.frontend ? `
             // Check for required Dockerfile instructions
             const upperDockerfile = dockerfile.toUpperCase();
             const hasFrom = upperDockerfile.includes('FROM');
-            
+
             if (!hasFrom) {
                 console.warn('Dockerfile missing FROM instruction');
                 return false;
@@ -390,11 +809,13 @@ ${includeNginx && projectStructure.frontend ? `
         }
 
         if (!result.nginxConf && projectStructure.frontend) {
-            // Use reverse proxy mode for development or when configured
-            const useReverseProxy = this.shouldUseReverseProxy(projectStructure);
-            result.nginxConf = useReverseProxy 
-                ? this.generateNginxReverseProxy() 
-                : this.generateFallbackNginx();
+            // For frontend-only apps, always use fallback (conditional logic built-in)
+            // For fullstack (frontend + backend), use reverse proxy
+            if (projectStructure.backend) {
+                result.nginxConf = this.generateNginxReverseProxy(projectStructure);
+            } else {
+                result.nginxConf = this.generateFallbackNginx(projectStructure);
+            }
         }
     }
 
@@ -402,52 +823,63 @@ ${includeNginx && projectStructure.frontend ? `
         // Check user configuration first
         const config = vscode.workspace.getConfiguration('autoDocker');
         const userPreference = config.get<boolean>('useReverseProxy', true);
-        
+
         // If user disabled reverse proxy, always use static serving
         if (!userPreference) {
             return false;
         }
-        
+
         // ALWAYS use reverse proxy for ANY frontend application detected
         // This includes: React, Vue, Angular, Vite, Svelte, Solid, Preact, Ember
         // Excludes: SSR frameworks (Next.js, Nuxt, SvelteKit) - they run their own Node server
         if (projectStructure.frontend) {
             const ssrFrameworks = ['nextjs', 'nuxt', 'sveltekit'];
             const isSSR = ssrFrameworks.includes(projectStructure.frontend);
-            
+
             // Use reverse proxy for all non-SSR frontends
             return !isSSR;
         }
-        
+
         return false;
+    }
+
+    private generateFallbackDockerFiles(projectStructure: ProjectStructure): DockerFiles {
+        console.log('📋 Generating Docker files using built-in templates...');
+
+        return {
+            dockerfile: this.generateFallbackDockerfile(projectStructure),
+            dockerCompose: this.generateFallbackCompose(projectStructure),
+            dockerIgnore: this.generateFallbackDockerignore(),
+            nginxConf: this.generateFallbackNginx(projectStructure)
+        };
     }
 
     private generateFallbackDockerfile(projectStructure: ProjectStructure): string {
         if (projectStructure.dependencies.packageJson) {
             const pkg = projectStructure.dependencies.packageJson;
             const buildDir = this.getBuildDirectory(projectStructure);
-            
+
             // Check if it's a frontend project that needs build
             if (projectStructure.frontend) {
                 // Framework-specific Dockerfiles
                 if (projectStructure.frontend === 'nextjs') {
                     return this.generateNextJsDockerfile();
                 }
-                
+
                 if (projectStructure.frontend === 'nuxt') {
                     return this.generateNuxtDockerfile();
                 }
-                
+
                 if (projectStructure.frontend === 'sveltekit') {
                     return this.generateSvelteKitDockerfile();
                 }
-                
+
                 // Check if using reverse proxy mode
                 const useReverseProxy = this.shouldUseReverseProxy(projectStructure);
                 if (useReverseProxy) {
                     return this.generateFrontendDevDockerfile();
                 }
-                
+
                 // Generic frontend build (React, Vue, Vite, Svelte, Solid, Preact, etc.)
                 return `FROM node:18-alpine AS build
 WORKDIR /app
@@ -586,7 +1018,7 @@ CMD ["npm", "start"]`;
             const isFlask = requirements.includes('flask');
             const isDjango = requirements.includes('django');
             const isFastAPI = requirements.includes('fastapi');
-            
+
             if (isFlask) {
                 return `# ==================== FLASK MULTI-STAGE BUILD ====================
 # Stage 1: Builder Stage
@@ -874,20 +1306,20 @@ CMD ["sh"]`;
         let appPort = '3000';
         let isSsr = false; // Server-side rendering frameworks
         const useReverseProxy = this.shouldUseReverseProxy(projectStructure);
-        
+
         // SSR frameworks that need their own server
-        if (projectStructure.frontend === 'nextjs' || 
-            projectStructure.frontend === 'nuxt' || 
+        if (projectStructure.frontend === 'nextjs' ||
+            projectStructure.frontend === 'nuxt' ||
             projectStructure.frontend === 'sveltekit') {
             isSsr = true;
             appPort = '3000';
-        } else if (projectStructure.frontend === 'react' || 
-                   projectStructure.frontend?.includes('vite') ||
-                   projectStructure.frontend === 'vue' ||
-                   projectStructure.frontend === 'angular' ||
-                   projectStructure.frontend === 'svelte' ||
-                   projectStructure.frontend === 'solid' ||
-                   projectStructure.frontend === 'preact') {
+        } else if (projectStructure.frontend === 'react' ||
+            projectStructure.frontend?.includes('vite') ||
+            projectStructure.frontend === 'vue' ||
+            projectStructure.frontend === 'angular' ||
+            projectStructure.frontend === 'svelte' ||
+            projectStructure.frontend === 'solid' ||
+            projectStructure.frontend === 'preact') {
             // Static build frontends
             appPort = useReverseProxy ? '3000' : '80'; // Use 3000 for reverse proxy, 80 for direct nginx
         } else if (projectStructure.backend === 'flask') {
@@ -895,76 +1327,114 @@ CMD ["sh"]`;
         } else if (projectStructure.backend === 'django' || projectStructure.backend === 'fastapi') {
             appPort = '8000';
         }
-        
+
         const hasEnv = projectStructure.hasEnvFile;
-        
-        // Reverse proxy mode: separate app and nginx services
-        if (useReverseProxy && projectStructure.frontend) {
+
+        // FRONTEND-ONLY: Single container with embedded nginx (multi-stage Dockerfile handles everything)
+        // Policy: For frontend-only projects, nginx is already in Dockerfile's final stage
+        if (projectStructure.frontend && !isSsr && !projectStructure.backend) {
             return `services:
-  app:
-    build: .
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${projectStructure.frontend || 'frontend'}
     ports:
-      - "${appPort}:${appPort}"${hasEnv ? `
+      - "80:80"
+    restart: unless-stopped${hasEnv ? `
     env_file:
       - .env` : ''}${projectStructure.database ? `
     depends_on:
-      - ${projectStructure.database}` : ''}
+      - ${projectStructure.database}
     networks:
-      - app-network
-
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-    depends_on:
-      - app
-    networks:
-      - app-network${projectStructure.database ? `
+      - app-network` : ''}
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3${projectStructure.database ? `
 
   ${projectStructure.database}:
     image: ${this.getDatabaseImage(projectStructure.database)}
+    container_name: ${projectStructure.database}
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: user
       POSTGRES_PASSWORD: pass
     volumes:
-      - db:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql/data
     networks:
-      - app-network` : ''}
+      - app-network
+    restart: unless-stopped` : ''}${projectStructure.database ? `
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  db_data:` : ''}`;
+        }
+
+        // FULL-STACK/MONOREPO: Separate containers with nginx as reverse proxy
+        // Policy: nginx serves frontend static + proxies /api/ to backend
+        if (projectStructure.frontend && projectStructure.backend) {
+            return `services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend
+    networks:
+      - app-network
+    restart: unless-stopped${hasEnv ? `
+    env_file:
+      - .env` : ''}${projectStructure.database ? `
+    depends_on:
+      - ${projectStructure.database}` : ''}
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: nginx-gateway
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped${projectStructure.database ? `
+
+  ${projectStructure.database}:
+    image: ${this.getDatabaseImage(projectStructure.database)}
+    container_name: ${projectStructure.database}
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    restart: unless-stopped` : ''}
 
 networks:
   app-network:
     driver: bridge${projectStructure.database ? `
 
 volumes:
-  db:` : ''}`;
-        }
-        
-        // For static frontends (React, Vue, Vite, Angular) - single nginx service
-        if (projectStructure.frontend && !isSsr && !projectStructure.backend) {
-            return `services:
-  web:
-    build: .
-    ports:
-      - "80:80"${hasEnv ? `
-    env_file:
-      - .env` : ''}${projectStructure.database ? `
-    depends_on:
-      - ${projectStructure.database}` : ''}${projectStructure.database ? `
-
-  ${projectStructure.database}:
-    image: ${this.getDatabaseImage(projectStructure.database)}
-    environment:
-      POSTGRES_DB: app
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-    volumes:
-      - db:/var/lib/postgresql/data` : ''}${projectStructure.database ? `
-
-volumes:
-  db:` : ''}`;
+  db_data:` : ''}`;
         } else {
             // SSR frameworks or backend - expose app port directly
             return `services:
@@ -1125,9 +1595,9 @@ WORKDIR /app
 COPY package*.json yarn.lock* pnpm-lock.yaml* ./
 
 # Install dependencies with fallback
-RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \\
-    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \\
-    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \\
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; \
+    elif [ -f yarn.lock ]; then yarn install --frozen-lockfile; \
+    elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile; \
     else npm install; fi
 
 # Copy all source files
@@ -1139,31 +1609,17 @@ RUN npm run build
 # Stage 2: Nginx Runtime
 FROM nginx:alpine
 
+# Copy custom nginx config (EXTERNAL FILE)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
 # Copy built application from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY --from=builder /app/build /usr/share/nginx/html
 
-# Nginx configuration for SPA routing
-RUN echo 'server {
-    listen 80;
-    server_name _;
-    root /usr/share/nginx/html;
-    index index.html;
-    
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
-    
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-}' > /etc/nginx/conf.d/default.conf
-
 EXPOSE 80
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
 
 # Run as non-root user
@@ -1172,41 +1628,126 @@ USER nginx
 CMD ["nginx", "-g", "daemon off;"]`;
     }
 
-    private generateFallbackNginx(): string {
-        return `server {
+    private generateFallbackNginx(projectStructure?: ProjectStructure): string {
+        const hasBackend = projectStructure?.backend ? true : false;
+
+        // Frontend-only: Simple SPA configuration
+        if (!hasBackend && projectStructure?.frontend) {
+            return `server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # SPA fallback routing
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Security headers
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer-when-downgrade" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Cache static assets
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Health check
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
+    }
+}`;
+        }
+
+        const backendPort = projectStructure?.backend === 'flask' ? '5000' : 
+                           (projectStructure?.backend === 'django' || projectStructure?.backend === 'fastapi') ? '8000' : '3000';
+
+        return `# Production Nginx Reverse Proxy Configuration
+# Serves frontend static files + proxies /api/ to backend
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+    
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Security headers
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Frontend - SPA routing
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Backend API proxy
+    location /api/ {
+        proxy_pass http://backend:${backendPort}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Health check
+    location /health {
+        access_log off;
+        return 200 "healthy\\n";
+        add_header Content-Type text/plain;
+    }
+}`;
+    }
+
+    private generateNginxReverseProxy(projectStructure?: ProjectStructure): string {
+        const hasBackend = projectStructure?.backend ? true : false;
+
+        const basicConfig = `server {
     listen 80;
 
     # Serve frontend build
     location / {
         try_files $uri $uri/ /index.html;
         root /usr/share/nginx/html;
-    }
+    }`;
+
+        const backendProxy = `
 
     # Backend reverse proxy
     location /api/ {
         proxy_pass http://backend:8000/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-    }
+    }`;
+
+        const closing = `
 }`;
-    }
 
-    private generateNginxReverseProxy(): string {
-        return `server {
-    listen 80;
-
-    # Serve frontend build
-    location / {
-        try_files $uri $uri/ /index.html;
-        root /usr/share/nginx/html;
-    }
-
-    # Backend reverse proxy
-    location /api/ {
-        proxy_pass http://backend:8000/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}`;
+        return basicConfig + (hasBackend ? backendProxy : '') + closing;
     }
 }

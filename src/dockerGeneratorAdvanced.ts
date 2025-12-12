@@ -99,38 +99,31 @@ RUN ${buildCommand}
 
 # ==================== STAGE 2: RUNTIME STAGE ====================
 # Purpose: Serve built application with Nginx (small, optimized)
-FROM nginx:alpine
+FROM nginx:stable-alpine
 
 WORKDIR /usr/share/nginx/html
 
 # Remove default nginx config
 RUN rm /etc/nginx/conf.d/default.conf
 
-# Copy custom nginx configuration (optimized for SPA)
-COPY nginx-frontend.conf /etc/nginx/conf.d/frontend.conf
+# Copy production nginx configuration
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Create non-root user
-RUN addgroup -g 101 -S nginx && \\
-    adduser -S nginx -u 101 -G nginx || true
-
-# Copy built application from builder
-COPY --from=builder --chown=nginx:nginx /app/dist . 
-COPY --from=builder --chown=nginx:nginx /app/build . 
-COPY --from=builder --chown=nginx:nginx /app/out .
+# Copy built application from builder (detect common build outputs)
+COPY --from=builder /app/dist . 2>/dev/null || \\
+     (COPY --from=builder /app/build . 2>/dev/null || \\
+      COPY --from=builder /app/out . 2>/dev/null || \\
+      COPY --from=builder /app/.next/static ./_next/static 2>/dev/null || true)
 
 # Set proper permissions
-RUN chmod -R 755 /usr/share/nginx/html && \\
-    chmod -R 755 /etc/nginx
-
-# Switch to non-root user
-USER nginx
+RUN chmod -R 755 /usr/share/nginx/html
 
 # Expose port
 EXPOSE 80
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \\
-  CMD wget --quiet --tries=1 --spider http://localhost/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
+  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
 
 # Start Nginx
 CMD ["nginx", "-g", "daemon off;"]`;
@@ -770,23 +763,29 @@ export class NginxConfigGenerator {
    * 4. Caching strategies
    * 5. Gzip compression
    */
-  static generateNginxConfig(frontendPort: number = 3000, backendPort: number = 8000, staticPath: string = '/dist'): string {
-    return `server {
+  static generateNginxConfig(frontendPort: number = 3000, backendPort: number = 8000, staticPath: string = '/dist', hasBackend: boolean = false): string {
+    const basicConfig = `server {
     listen 80;
 
     # Serve frontend build
     location / {
         try_files $uri $uri/ /index.html;
         root /usr/share/nginx/html;
-    }
+    }`;
+
+    const backendProxy = `
 
     # Backend reverse proxy
     location /api/ {
         proxy_pass http://backend:${backendPort}/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-    }
+    }`;
+
+    const closing = `
 }`;
+
+    return basicConfig + (hasBackend ? backendProxy : '') + closing;
   }
 
   /**

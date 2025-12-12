@@ -54,6 +54,10 @@ export interface ProjectStructure {
     searchEngine?: 'elasticsearch' | 'opensearch';
     reverseProxy?: 'nginx' | 'traefik' | 'caddy';
     monitoring?: 'prometheus' | 'grafana';
+    // Frontend/Backend classification flags (for Nginx and Docker generation)
+    isFrontendOnly?: boolean;  // true if has frontend && !backend
+    isBackendOnly?: boolean;   // true if has backend && !frontend
+    isFullstack?: boolean;     // true if has both frontend && backend
 }
 
 export class ProjectAnalyzer {
@@ -593,6 +597,17 @@ export class ProjectAnalyzer {
                     result.type = 'static';
                 }
             }
+        }
+
+        // Set classification flags based on frontend/backend presence
+        if (result.frontend && !result.backend) {
+            result.isFrontendOnly = true;
+        }
+        if (result.backend && !result.frontend) {
+            result.isBackendOnly = true;
+        }
+        if (result.frontend && result.backend) {
+            result.isFullstack = true;
         }
 
         return result;
