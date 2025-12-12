@@ -8,6 +8,7 @@ import { FileManager } from './fileManager';
 import { DockerTestRunner } from './testRunner';
 import { TestReporter } from './testReporter';
 import { TestProjectGenerator } from './testProjectGenerator';
+import { ComprehensiveAnalyzer } from './comprehensiveAnalyzer';
 import {
     MultiWorkspaceManager,
     BOMHandler,
@@ -119,7 +120,7 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
 
                 const enhancedAnalyzer = new EnhancedProjectAnalyzer(workspaceRoot, outputChannel);
                 const analysis = await enhancedAnalyzer.analyzeWithAdvancedFeatures(model);
-                
+
                 // CRITICAL FIX #33: Safe property access with defaults
                 const projectStructure = analysis?.projectStructure;
                 if (!projectStructure) {
@@ -142,8 +143,8 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                 const dockerFiles = await llmService.generateDockerFiles(projectStructure);
 
                 // CRITICAL FIX #34: Validate generated content
-                if (!dockerFiles || 
-                    !dockerFiles.dockerfile || 
+                if (!dockerFiles ||
+                    !dockerFiles.dockerfile ||
                     !dockerFiles.dockerCompose ||
                     !dockerFiles.dockerIgnore) {
                     throw new Error('LLM generated incomplete Docker files');
@@ -194,9 +195,9 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
 
     } catch (error) {
         // CRITICAL FIX #35: Comprehensive error logging and user feedback
-        const errorMessage = error instanceof Error ? error.message : 
-                           typeof error === 'string' ? error :
-                           'Unknown error occurred';
+        const errorMessage = error instanceof Error ? error.message :
+            typeof error === 'string' ? error :
+                'Unknown error occurred';
         outputChannel.appendLine(`❌ Error: ${errorMessage}`);
         if (error instanceof Error && error.stack) {
             outputChannel.appendLine(`Stack: ${error.stack}`);
@@ -364,7 +365,7 @@ async function runComprehensiveTests(): Promise<void> {
                 // Add timeout to prevent hanging tests
                 const testWithTimeout = Promise.race([
                     testRunner.runAllTests(workspaceRoot),
-                    new Promise((_, reject) => 
+                    new Promise((_, reject) =>
                         setTimeout(() => reject(new Error('Test execution timeout')), 300000) // 5 minute timeout
                     )
                 ]) as Promise<any>;
@@ -408,9 +409,9 @@ async function runComprehensiveTests(): Promise<void> {
         // No additional catch needed here
 
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 
-                           typeof error === 'string' ? error :
-                           'Unknown error occurred';
+        const errorMessage = error instanceof Error ? error.message :
+            typeof error === 'string' ? error :
+                'Unknown error occurred';
         outputChannel.appendLine(`❌ Error: ${errorMessage}`);
         vscode.window.showErrorMessage(`Test execution failed: ${errorMessage}`);
     }
