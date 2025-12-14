@@ -62,31 +62,22 @@ export class EnhancedProjectAnalyzer {
      * Main method: Perform comprehensive codebase analysis
      */
     async analyzeWithAdvancedFeatures(model: string = 'gpt-4'): Promise<EnhancedProjectAnalysis> {
-        this.outputChannel.appendLine('\n🚀 Enhanced Project Analysis Started...');
-        this.outputChannel.appendLine('━'.repeat(60));
+        this.outputChannel.appendLine('🚀 Enhanced Project Analysis Started...');
 
         try {
             // Step 1: Traditional project analysis (existing functionality)
-            this.outputChannel.appendLine('📦 Running traditional project analysis...');
             const projectStructure = await this.projectAnalyzer.analyzeProject();
 
             // Step 2: Generate file embeddings
-            this.outputChannel.appendLine('🔍 Generating file embeddings...');
             const fileEmbeddings = await this.embeddingService.generateFileEmbeddings();
-            this.outputChannel.appendLine(`   Found ${fileEmbeddings.length} files with importance scores`);
 
             // Step 3: Extract LSP metadata
-            this.outputChannel.appendLine('🔬 Extracting LSP metadata...');
             const lspMetadata = await this.lspService.extractMetadata();
-            this.outputChannel.appendLine(`   Detected ${lspMetadata.frameworks.length} frameworks`);
 
             // Step 4: Build RAG context
-            this.outputChannel.appendLine('🧠 Building RAG context for AI...');
             const ragContext = await this.ragService.buildContext(model);
-            this.outputChannel.appendLine(`   Context built: ${ragContext.criticalFiles.length} files, ~${ragContext.totalTokens} tokens`);
 
             // Step 5: Generate comprehensive analysis summary
-            this.outputChannel.appendLine('📊 Generating analysis summary...');
             const analysisSummary = this.generateAnalysisSummary(
                 projectStructure,
                 fileEmbeddings,
@@ -101,9 +92,7 @@ export class EnhancedProjectAnalyzer {
                 lspMetadata
             );
 
-            this.outputChannel.appendLine('━'.repeat(60));
-            this.outputChannel.appendLine('✅ Enhanced Analysis Complete!\n');
-            this.displayAnalysisSummary(codebaseInsights);
+            this.outputChannel.appendLine('✅ Enhanced Analysis Complete!');
 
             return {
                 projectStructure,
@@ -215,13 +204,7 @@ export class EnhancedProjectAnalyzer {
      * Display analysis summary in output channel
      */
     private displayAnalysisSummary(insights: CodebaseInsights): void {
-        this.outputChannel.appendLine('\n📊 CODEBASE INSIGHTS:');
-        this.outputChannel.appendLine(`   • Total Files: ${insights.totalFiles}`);
-        this.outputChannel.appendLine(`   • Critical Files: ${insights.criticalFiles}`);
-        this.outputChannel.appendLine(`   • Complexity: ${insights.estimatedComplexity.toUpperCase()}`);
-        this.outputChannel.appendLine(`   • Languages: ${insights.primaryLanguages.join(', ')}`);
-        this.outputChannel.appendLine(`   • Frameworks: ${insights.detectedFrameworks.join(', ')}`);
-        this.outputChannel.appendLine(`   • Strategy: ${insights.recommendedDockerStrategy}\n`);
+        // Minimal output - details available in debug logs
     }
 
     /**

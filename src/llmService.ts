@@ -71,29 +71,23 @@ export class LLMService {
         for (const provider of providers) {
             try {
                 console.log(`🔄 Attempting ${provider.name}...`);
-                vscode.window.showInformationMessage(`🔄 Generating with ${provider.name}...`);
+                // Notification removed for cleaner UX
 
                 const response = await provider.fn();
-                vscode.window.showInformationMessage(`✅ Successfully generated with ${provider.name}!`);
+                console.log(`✅ Successfully generated with ${provider.name}!`);
                 return this.parseResponse(response, projectStructure);
             } catch (error: any) {
                 lastError = error;
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 console.error(`❌ ${provider.name} failed:`, errorMsg);
 
-                // Check if it's a quota/rate limit error
+                // Check if it's a quota/rate limit error (log only, no notifications)
                 if (this.isQuotaError(error)) {
-                    vscode.window.showWarningMessage(
-                        `⚠️ ${provider.name} quota exceeded. Trying next provider...`
-                    );
+                    console.warn(`⚠️ ${provider.name} quota exceeded. Trying next provider...`);
                 } else if (this.isAuthError(error)) {
-                    vscode.window.showWarningMessage(
-                        `⚠️ ${provider.name} authentication failed. Trying next provider...`
-                    );
+                    console.warn(`⚠️ ${provider.name} authentication failed. Trying next provider...`);
                 } else {
-                    vscode.window.showWarningMessage(
-                        `⚠️ ${provider.name} error: ${errorMsg}. Trying next provider...`
-                    );
+                    console.warn(`⚠️ ${provider.name} error: ${errorMsg}. Trying next provider...`);
                 }
 
                 // Continue to next provider
@@ -103,9 +97,8 @@ export class LLMService {
 
         // All providers failed, use fallback templates
         console.log('⚠️ All API providers failed. Using fallback templates.');
-        vscode.window.showWarningMessage(
-            '⚠️ All APIs temporarily unavailable. Using built-in templates. Some customization may be reduced.'
-        );
+        // Notification removed for cleaner UX
+
 
         return this.generateFallbackDockerFiles(projectStructure);
     }
@@ -280,12 +273,17 @@ ${hasFrontend ? analysis.frontends.map(fe => `- **${fe.path}**: Use **${fe.packa
 ❌ **NEVER** generate .env.example file
 ✅ Reference existing .env files in docker-compose.yml if detected
 
-## RULE #7: MULTI-STAGE BUILDS
+## RULE #7: .DOCKERIGNORE MUST NOT EXCLUDE .env FILES
+❌ **NEVER** include .env, .env.local, .env.* in .dockerignore
+✅ Applications need .env files to run in containers
+✅ Only exclude: node_modules, .git, logs, *.log, .vscode, __pycache__, dist, build
+
+## RULE #8: MULTI-STAGE BUILDS
 - Use multi-stage builds for ALL frontend projects
 - Stage 1: node:20-alpine AS builder (build process)
 - Stage 2: nginx:alpine (production serve)
 
-## RULE #8: BACKEND FRAMEWORKS
+## RULE #9: BACKEND FRAMEWORKS
 ${hasBackend ? analysis.backends.map(be => {
             if (be.language === 'python') {
                 if (be.framework.includes('fastapi')) {
@@ -1379,38 +1377,34 @@ volumes:
         // Policy: nginx serves frontend static + proxies /api/ to backend
         if (projectStructure.frontend && projectStructure.backend) {
             return `services:
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: frontend
-    networks:
-      - app-network
-    restart: unless-stopped
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: backend
+    expose:
+      - "${appPort}"
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${appPort}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped${hasEnv ? `
     env_file:
       - .env` : ''}${projectStructure.database ? `
     depends_on:
       - ${projectStructure.database}` : ''}
 
-  nginx:
-    image: nginx:stable-alpine
-    container_name: nginx-gateway
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
     ports:
       - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - frontend
       - backend
     networks:
       - app-network
@@ -1671,8 +1665,8 @@ CMD ["nginx", "-g", "daemon off;"]`;
 }`;
         }
 
-        const backendPort = projectStructure?.backend === 'flask' ? '5000' : 
-                           (projectStructure?.backend === 'django' || projectStructure?.backend === 'fastapi') ? '8000' : '3000';
+        const backendPort = projectStructure?.backend === 'flask' ? '5000' :
+            (projectStructure?.backend === 'django' || projectStructure?.backend === 'fastapi') ? '8000' : '3000';
 
         return `# Production Nginx Reverse Proxy Configuration
 # Serves frontend static files + proxies /api/ to backend

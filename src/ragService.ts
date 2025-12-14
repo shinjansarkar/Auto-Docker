@@ -66,15 +66,12 @@ export class RAGService {
      * Main method: Build optimal RAG context for AI generation
      */
     async buildContext(model: string = 'gpt-4'): Promise<RAGContext> {
-        this.outputChannel.appendLine('🔄 RAG: Building optimal context for AI...');
 
         // Step 1: Get file embeddings
         const embeddings = await this.embeddingService.generateFileEmbeddings();
-        this.outputChannel.appendLine(`📊 RAG: Analyzed ${embeddings.length} files`);
 
         // Step 2: Get LSP metadata
         const metadata = await this.lspService.extractMetadata();
-        this.outputChannel.appendLine(`🔍 RAG: Extracted LSP metadata`);
 
         // Step 3: Select critical files based on token budget
         const tokenLimit = this.getTokenLimit(model);
@@ -92,7 +89,7 @@ export class RAGService {
         // Step 7: Calculate total tokens
         const totalTokens = this.estimateTokens(summary, criticalFiles, metadata);
 
-        this.outputChannel.appendLine(`✅ RAG: Context built (${criticalFiles.length} files, ~${totalTokens} tokens)`);
+
 
         return {
             summary,

@@ -44,7 +44,7 @@ suite('FileManager Test Suite', () => {
             const dockerFiles: DockerFiles = {
                 dockerfile: 'FROM node:18\nWORKDIR /app\nCOPY . .\nRUN npm install\nCMD ["npm", "start"]',
                 dockerCompose: 'version: "3.8"\nservices:\n  app:\n    build: .\n    ports:\n      - "3000:3000"',
-                dockerIgnore: 'node_modules\n.git\n.env'
+                dockerIgnore: 'node_modules\n.git\nlogs'
             };
 
             const projectStructure: ProjectStructure = {
@@ -286,7 +286,7 @@ suite('FileManager Test Suite', () => {
             const dockerFiles: DockerFiles = {
                 dockerfile: 'FROM node:18\nWORKDIR /app',
                 dockerCompose: 'version: "3.8"\nservices:\n  app:\n    build: .',
-                dockerIgnore: 'node_modules\n.git\n.env\ndist',
+                dockerIgnore: 'node_modules\n.git\nlogs\ndist',
                 nginxConf: 'server { listen 80; location / { proxy_pass http://app:3000; } }'
             };
 

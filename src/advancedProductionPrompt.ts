@@ -4,15 +4,15 @@
  */
 
 export function createAdvancedProductionPrompt(analysis: any): string {
-    const hasBackend = analysis.backends.length > 0;
-    const hasFrontend = analysis.frontends.length > 0;
-    const isMonorepo = analysis.isMonorepo;
-    const hasDatabases = analysis.databases.length > 0;
-    const hasMessageQueue = analysis.services?.rabbitmq || analysis.services?.kafka;
-    const hasCache = analysis.services?.redis;
-    const hasWebSocket = analysis.specialConfigs?.hasWebSocket;
+  const hasBackend = analysis.backends.length > 0;
+  const hasFrontend = analysis.frontends.length > 0;
+  const isMonorepo = analysis.isMonorepo;
+  const hasDatabases = analysis.databases.length > 0;
+  const hasMessageQueue = analysis.services?.rabbitmq || analysis.services?.kafka;
+  const hasCache = analysis.services?.redis;
+  const hasWebSocket = analysis.specialConfigs?.hasWebSocket;
 
-    return `
+  return `
 # 🚀 ADVANCED PRODUCTION DOCKER CONFIGURATION GENERATOR
 
 You are an expert Docker and DevOps configuration generator. Generate production-ready Docker configurations based on the comprehensive codebase analysis below.
@@ -335,7 +335,7 @@ server {
     }
 
     # No cache for HTML
-    location ~* \\.html$ {
+    location ~* \.html$ {
         expires -1;
         add_header Cache-Control "no-cache";
     }
@@ -417,7 +417,7 @@ Generate ALL files following the exact format:
 [Production nginx config - SEPARATE FILE!]
 
 ---FILE: .dockerignore---
-[Build context optimization]
+[Build context optimization - NEVER include .env or .env.* files!]
 
 ---FILE: .env.example---
 [Environment variables template]
