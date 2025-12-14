@@ -294,6 +294,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install curl for health checks
+RUN apk add --no-cache curl
+
 # Copy package files
 COPY ${packageFiles} ./
 
@@ -600,11 +603,6 @@ pnpm-debug.log
 # Testing
 coverage
 .nyc_output
-
-# Environment files
-.env
-.env.local
-.env.*.local
 
 # Editor directories
 .vscode

@@ -159,7 +159,8 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                     try {
                         const confirmed = await fileManager.showPreview(dockerFiles);
                         if (!confirmed) {
-                            outputChannel.appendLine('⚠️  Docker generation cancelled by user');
+                            outputChannel.appendLine('⚠️  Docker generation cancelled');
+                            vscode.window.showInformationMessage('Docker generation cancelled');
                             return;
                         }
                     } catch (error) {

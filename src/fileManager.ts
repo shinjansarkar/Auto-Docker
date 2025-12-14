@@ -594,6 +594,9 @@ export class FileManager {
             // Generate root-level docker-compose.yml and nginx.conf
             const dockerComposePath = path.join(this.workspaceRoot, 'docker-compose.yml');
             const nginxConfPath = path.join(this.workspaceRoot, 'nginx.conf');
+            
+            // Generate frontend-specific nginx.conf for SPA routing
+            const frontendNginxConfPath = path.join(frontendPath, 'nginx.conf');
 
             const filesToWrite = [
                 { path: frontendDockerfilePath, content: frontendDockerfile, name: `${projectStructure.frontendPath}/Dockerfile` },
@@ -606,6 +609,12 @@ export class FileManager {
                     path: nginxConfPath,
                     content: this.generateMonorepoNginxConf(projectStructure),
                     name: 'nginx.conf'
+                },
+                // Generate frontend SPA nginx configuration
+                {
+                    path: frontendNginxConfPath,
+                    content: this.generateFrontendNginxConf(),
+                    name: `${projectStructure.frontendPath}/nginx.conf`
                 },
             ];
 
@@ -638,9 +647,10 @@ export class FileManager {
             vscode.window.showInformationMessage(
                 `✅ Monorepo Docker files created successfully!\n` +
                 `- ${projectStructure.frontendPath}/Dockerfile\n` +
+                `- ${projectStructure.frontendPath}/nginx.conf\n` +
                 `- ${projectStructure.backendPath}/Dockerfile\n` +
                 `- docker-compose.yml\n` +
-                `- nginx.conf`
+                `- nginx.conf (reverse proxy)`
             );
 
         } catch (error) {
@@ -671,26 +681,12 @@ RUN npm run build
 # Stage 2: Nginx Runtime
 FROM nginx:alpine
 
+# Copy nginx configuration (separate file)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
 # Copy built application from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY --from=builder /app/build /usr/share/nginx/html
-
-# Nginx configuration for SPA routing
-RUN echo 'server {
-    listen 80;
-    server_name _;
-    root /usr/share/nginx/html;
-    index index.html;
-    
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
-    
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-}' > /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 
@@ -730,6 +726,9 @@ CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "app:app"]`;
             return `FROM node:18-alpine
 WORKDIR /app
 
+# Install curl for healthchecks
+RUN apk add --no-cache curl
+
 # Copy package files
 COPY package.json package-lock.json* yarn.lock* pnpm-lock.yaml* ./
 
@@ -758,33 +757,13 @@ CMD ["npm", "start"]`;
         let compose = `version: '3.8'
 
 services:
-  frontend:
-    build: ./${projectStructure.frontendPath}
-    container_name: app-frontend
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
-    volumes:
-      - ./${projectStructure.frontendPath}:/app
-      - /app/node_modules
-    networks:
-      - app-network
-    depends_on:
-      backend:
-        condition: service_healthy
-    restart: unless-stopped
-
   backend:
     build: ./${projectStructure.backendPath}
     container_name: app-backend
-    ports:
-      - "${backendPort}:${backendPort}"
+    expose:
+      - "${backendPort}"
     env_file:
       - .env
-    volumes:
-      - ./${projectStructure.backendPath}:/app${projectStructure.backendDependencies?.requirementsTxt ? '' : `
-      - /app/node_modules`}
     networks:
       - app-network
     healthcheck:
@@ -842,31 +821,22 @@ services:
                     compose += `\n        condition: service_started`;
                 }
             });
+        } else {
+            // If no dependencies, remove the incomplete depends_on section
+            compose = compose.replace(/\n    depends_on:\s*$/, '');
         }
 
         compose += `
 
-  nginx:
-    image: nginx:alpine
-    container_name: app-nginx
+  frontend:
+    build: ./${projectStructure.frontendPath}
+    container_name: app-frontend
     ports:
       - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
     networks:
       - app-network
-    depends_on:
-      frontend:
-        condition: service_healthy
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
     restart: unless-stopped
 `;
 
@@ -900,6 +870,8 @@ services:
   mongodb:
     image: mongo:7-alpine
     container_name: app-mongo
+    expose:
+      - "27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: \${MONGO_INITDB_ROOT_USERNAME:-root}
       MONGO_INITDB_ROOT_PASSWORD: \${MONGO_INITDB_ROOT_PASSWORD:-changeme}
@@ -1130,7 +1102,7 @@ limit_req_zone $binary_remote_addr zone=api:10m rate=100r/s;
 
 # Upstream servers with health checks
 upstream frontend {
-    server frontend:3000 max_fails=3 fail_timeout=30s;
+    server frontend:80 max_fails=3 fail_timeout=30s;
     keepalive 32;
 }
 
@@ -1390,5 +1362,48 @@ server {
             console.warn('YAML validation warning:', error);
             return yaml;
         }
+    }
+
+    /**
+     * Generate frontend SPA nginx configuration
+     * This is a separate file that gets copied into the Docker image
+     */
+    private generateFrontendNginxConf(): string {
+        return `server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    
+    # SPA routing - redirect all requests to index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+    
+    # API proxy to backend
+    location /api/ {
+        proxy_pass http://backend:5000/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+    
+    # Static asset caching
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+}
+`;
     }
 }

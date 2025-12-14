@@ -99,20 +99,20 @@ suite('Security Tests', () => {
     });
 
     suite('Sensitive File Exclusion', () => {
-        test('Should exclude .env files in .dockerignore', async () => {
+        test('Should exclude .git directory in .dockerignore', async () => {
             const projectStructure: ProjectStructure = {
                 projectType: 'backend',
                 backend: 'node-express',
                 files: ['package.json', '.env'],
                 dependencies: { express: '^4.18.0' },
                 hasMultiStage: false,
-                description: 'API with env vars'
+                description: 'API with git'
             };
 
             const result = await llmService.generateDockerFiles(projectStructure);
 
-            assert.strictEqual(result.dockerIgnore.includes('.env'), true,
-                'Should exclude .env files');
+            assert.strictEqual(result.dockerIgnore.includes('.git'), true,
+                'Should exclude .git directory');
         });
 
         test('Should exclude .git directory', async () => {

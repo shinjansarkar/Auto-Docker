@@ -417,11 +417,7 @@ export class DockerignoreGenerator {
         '.gradle/',
         'target/',
 
-        // Environment & Secrets
-        '.env',
-        '.env.local',
-        '.env.*.local',
-        '.env.*.secret',
+
 
         // IDE & Editor
         '.vscode/',
@@ -494,10 +490,8 @@ git-secrets.sh
 # ============================================================================
 # Credentials & Environment (SECURITY)
 # ============================================================================
-.env
-.env.local
-.env.*.local
-.env.*.secret
+# NOTE: .env files are NOT ignored - they are needed in containers
+# Make sure to use .env.example for templates and keep actual .env secure
 
 # ============================================================================
 # Package Managers

@@ -630,35 +630,14 @@ export class DockerComposeGenerator {
     return `version: '3.9'
 
 services:
-  # ==================== FRONTEND SERVICE ====================
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: app_frontend
-    ports:
-      - "3000:80"
-    environment:
-      - NODE_ENV=production
-      - REACT_APP_API_URL=http://localhost/api
-    networks:
-      - app-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
   # ==================== BACKEND SERVICE ====================
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: app_backend
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - NODE_ENV=production
       - PORT=8000
@@ -676,28 +655,22 @@ services:
       retries: 3
       start_period: 10s
 
-  # ==================== NGINX REVERSE PROXY ====================
-  nginx:
-    image: nginx:alpine
-    container_name: app_nginx
+  # ==================== FRONTEND SERVICE (with NGINX) ====================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: app_frontend
     ports:
       - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - nginx_cache:/var/cache/nginx
+    environment:
+      - NODE_ENV=production
+      - REACT_APP_API_URL=http://localhost/api
     depends_on:
-      - frontend
       - backend
     networks:
       - app-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # ==================== POSTGRESQL DATABASE ====================
   postgres:
@@ -707,8 +680,8 @@ services:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=app_db
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

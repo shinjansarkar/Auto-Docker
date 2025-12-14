@@ -75,8 +75,6 @@ export class LSPMetadataService {
      * Main method: Extract all LSP metadata
      */
     async extractMetadata(): Promise<LSPMetadata> {
-        this.outputChannel.appendLine('🔍 LSP: Extracting metadata from workspace...');
-
         const [
             entryPoints,
             frameworks,
@@ -91,8 +89,6 @@ export class LSPMetadataService {
 
         const exports = await this.extractExports();
         const imports = await this.extractImports();
-
-        this.outputChannel.appendLine(`✅ LSP: Found ${entryPoints.length} entry points, ${frameworks.length} frameworks`);
 
         return {
             entryPoints,
