@@ -130,11 +130,12 @@ export class GuardrailsService {
             }
 
         } catch (error) {
-            this.log(`❌ Validation error: ${error.message}`);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.log(`❌ Validation error: ${errorMessage}`);
             validationResult.valid = false;
             validationResult.errors.push({
                 field: 'general',
-                message: `Validation exception: ${error.message}`,
+                message: `Validation exception: ${errorMessage}`,
                 severity: 'critical'
             });
         }
@@ -162,7 +163,7 @@ export class GuardrailsService {
                 field: 'dockerfile',
                 message: 'Dockerfile schema validation failed',
                 severity: 'critical',
-                suggestion: error.message
+                suggestion: error instanceof Error ? error.message : String(error)
             });
         }
 
@@ -174,7 +175,7 @@ export class GuardrailsService {
                 field: 'dockerCompose',
                 message: 'docker-compose.yml schema validation failed',
                 severity: 'critical',
-                suggestion: error.message
+                suggestion: error instanceof Error ? error.message : String(error)
             });
         }
 
@@ -186,7 +187,7 @@ export class GuardrailsService {
                 field: 'dockerIgnore',
                 message: '.dockerignore validation failed',
                 severity: 'low',
-                suggestion: error.message
+                suggestion: error instanceof Error ? error.message : String(error)
             });
         }
 
@@ -199,7 +200,7 @@ export class GuardrailsService {
                     field: 'nginxConf',
                     message: 'nginx.conf validation failed',
                     severity: 'high',
-                    suggestion: error.message
+                    suggestion: error instanceof Error ? error.message : String(error)
                 });
             }
         }
@@ -304,7 +305,7 @@ export class GuardrailsService {
             
             if (compose && compose.services) {
                 for (const [serviceName, service] of Object.entries(compose.services as any)) {
-                    const environment = service.environment || {};
+                    const environment = (service as any).environment || {};
                     
                     // Check for undefined environment variables
                     for (const [key, value] of Object.entries(environment)) {

@@ -6,6 +6,7 @@ import {
     ChunkedFileProcessor,
     BOMHandler
 } from './criticalErrorHandling';
+import { SchemaValidator } from './schemaValidator';
 import {
     SafeFileReader,
     SafeDirectoryReader,
@@ -285,7 +286,15 @@ export class ProjectAnalyzer {
             if (packageJsonContent) {
                 try {
                     const cleanContent = BOMHandler.removeBOM(packageJsonContent);
-                    packageInfo.packageJson = JSON.parse(cleanContent);
+                    const validationResult = SchemaValidator.validatePackageJson(cleanContent);
+                    
+                    if (validationResult.valid && validationResult.data) {
+                        packageInfo.packageJson = validationResult.data;
+                    } else {
+                        console.warn('Invalid package.json schema:', validationResult.errors?.join(', '));
+                        // Fallback to basic JSON parse
+                        packageInfo.packageJson = JSON.parse(cleanContent);
+                    }
                 } catch (parseError) {
                     console.warn('Invalid JSON in package.json:', parseError);
                 }
@@ -813,7 +822,10 @@ export class ProjectAnalyzer {
                             const packageJsonUri = vscode.Uri.file(path.join(fullServicePath, 'package.json'));
                             try {
                                 const packageContent = await vscode.workspace.fs.readFile(packageJsonUri);
-                                const packageJson = JSON.parse(packageContent.toString());
+                                const validationResult = SchemaValidator.validatePackageJson(packageContent.toString());
+                                const packageJson = validationResult.valid && validationResult.data 
+                                    ? validationResult.data 
+                                    : JSON.parse(packageContent.toString());
                                 const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
 
                                 let framework = 'nodejs';
