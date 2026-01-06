@@ -7,6 +7,7 @@ import { ComprehensiveAnalysis } from './comprehensiveAnalyzer';
 import { createAdvancedProductionPrompt } from './advancedProductionPrompt';
 import { GuardrailsService } from './guardrailsService';
 import { ValidatedDockerFiles } from './guardrailsTypes';
+import { SchemaValidator } from './schemaValidator';
 
 export interface DockerFiles {
     dockerfile: string;
@@ -798,6 +799,16 @@ ${isFrontend || (projectStructure.backend && projectStructure.frontend) ? `
     // CRITICAL FIX: Add validation methods for YAML, Dockerfile, and nginx syntax
     private validateYAMLStructure(yaml: string): boolean {
         try {
+            // Use SchemaValidator for robust YAML validation
+            const validationResult = SchemaValidator.validateDockerCompose(yaml);
+            
+            if (validationResult.valid) {
+                return true;
+            }
+
+            // Fallback to basic validation if schema validation fails
+            console.warn('Schema validation failed, using basic validation:', validationResult.errors?.join(', '));
+            
             // Check for basic YAML structure validity
             if (!yaml || yaml.trim().length === 0) {
                 return false;
@@ -810,17 +821,6 @@ ${isFrontend || (projectStructure.backend && projectStructure.frontend) ? `
                 return false;
             }
 
-            // Basic indentation check
-            const lines = yaml.split('\n');
-            let previousIndent = 0;
-            for (const line of lines) {
-                if (line.trim().length === 0) continue;
-
-                const indent = line.search(/\S/);
-                // Allow flexibility but ensure minimal structure
-                if (indent < 0) return false;
-            }
-
             return true;
         } catch (error) {
             console.error('YAML validation error:', error);
@@ -830,6 +830,16 @@ ${isFrontend || (projectStructure.backend && projectStructure.frontend) ? `
 
     private validateDockerfileSyntax(dockerfile: string): boolean {
         try {
+            // Use SchemaValidator for Dockerfile structure validation
+            const validationResult = SchemaValidator.validateDockerfileStructure(dockerfile);
+            
+            if (validationResult.valid) {
+                return true;
+            }
+
+            // Fallback to basic validation
+            console.warn('Dockerfile structure validation failed:', validationResult.errors?.join(', '));
+
             if (!dockerfile || dockerfile.trim().length === 0) {
                 return false;
             }

@@ -334,9 +334,10 @@ export class ServiceDependencyValidator extends DockerValidator {
             }
 
         } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
             errors.push(this.createError(
                 'docker-compose.yml',
-                `Failed to parse YAML: ${error.message}`,
+                `Failed to parse YAML: ${errorMessage}`,
                 undefined,
                 'Ensure docker-compose.yml is valid YAML'
             ));
