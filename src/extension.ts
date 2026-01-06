@@ -139,7 +139,7 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                 progress.report({ increment: 40, message: "Generating Docker configuration..." });
                 outputChannel.appendLine('🤖 Generating Docker files...');
 
-                const llmService = new LLMService();
+                const llmService = new LLMService(outputChannel);
                 const dockerFiles = await llmService.generateDockerFiles(projectStructure);
 
                 // CRITICAL FIX #34: Validate generated content

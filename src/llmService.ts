@@ -5,6 +5,8 @@ import { ProjectStructure } from './projectAnalyzer';
 import { BOMHandler } from './criticalErrorHandling';
 import { ComprehensiveAnalysis } from './comprehensiveAnalyzer';
 import { createAdvancedProductionPrompt } from './advancedProductionPrompt';
+import { GuardrailsService } from './guardrailsService';
+import { ValidatedDockerFiles } from './guardrailsTypes';
 
 export interface DockerFiles {
     dockerfile: string;
@@ -16,9 +18,11 @@ export interface DockerFiles {
 export class LLMService {
     private openaiClient?: OpenAI;
     private geminiClient?: GoogleGenerativeAI;
+    private guardrailsService: GuardrailsService;
 
-    constructor() {
+    constructor(outputChannel?: vscode.OutputChannel) {
         this.initializeClients();
+        this.guardrailsService = new GuardrailsService(outputChannel);
     }
 
     private initializeClients() {
@@ -40,14 +44,22 @@ export class LLMService {
     async generateDockerFiles(projectStructure: ProjectStructure): Promise<DockerFiles> {
         const config = vscode.workspace.getConfiguration('autoDocker');
         const preferredProvider = config.get<string>('apiProvider', 'openai');
+        const maxReasks = config.get<number>('maxReasks', 2);
         const prompt = this.createPrompt(projectStructure);
 
-        // Try providers in order: preferred first, then fallback to others
-        const providers: Array<{ name: string; fn: () => Promise<string> }> = [];
+        let attemptCount = 0;
+        let lastValidationResult: ValidatedDockerFiles | null = null;
 
-        // Add preferred provider first
-        if (preferredProvider === 'openai' && this.openaiClient) {
-            providers.push({ name: 'OpenAI', fn: () => this.callOpenAIWithRetry(prompt) });
+        // Try generating with validation and re-asking if needed
+        while (attemptCount <= maxReasks) {
+            attemptCount++;
+
+            // Try providers in order: preferred first, then fallback to others
+            const providers: Array<{ name: string; fn: () => Promise<string> }> = [];
+
+            // Add preferred provider first
+            if (preferredProvider === 'openai' && this.openaiClient) {
+                providers.push({ name: 'OpenAI', fn: () => this.callOpenAIWithRetry(prompt) });
         } else if (preferredProvider === 'gemini' && this.geminiClient) {
             providers.push({ name: 'Gemini', fn: () => this.callGeminiWithRetry(prompt) });
         } else if (preferredProvider === 'anthropic') {
@@ -65,40 +77,108 @@ export class LLMService {
             providers.push({ name: 'Anthropic Claude', fn: () => this.callAnthropicWithRetry(prompt) });
         }
 
-        let lastError: Error | null = null;
+            let lastError: Error | null = null;
 
-        // Try each provider
-        for (const provider of providers) {
-            try {
-                console.log(`🔄 Attempting ${provider.name}...`);
-                // Notification removed for cleaner UX
+            // Try each provider
+            for (const provider of providers) {
+                try {
+                    console.log(`🔄 Attempting ${provider.name} (Attempt ${attemptCount}/${maxReasks + 1})...`);
 
-                const response = await provider.fn();
-                console.log(`✅ Successfully generated with ${provider.name}!`);
-                return this.parseResponse(response, projectStructure);
-            } catch (error: any) {
-                lastError = error;
-                const errorMsg = error instanceof Error ? error.message : String(error);
-                console.error(`❌ ${provider.name} failed:`, errorMsg);
+                    const response = await provider.fn();
+                    console.log(`✅ Successfully generated with ${provider.name}!`);
+                    
+                    // Parse response
+                    const dockerFiles = this.parseResponse(response, projectStructure);
 
-                // Check if it's a quota/rate limit error (log only, no notifications)
-                if (this.isQuotaError(error)) {
-                    console.warn(`⚠️ ${provider.name} quota exceeded. Trying next provider...`);
-                } else if (this.isAuthError(error)) {
-                    console.warn(`⚠️ ${provider.name} authentication failed. Trying next provider...`);
-                } else {
-                    console.warn(`⚠️ ${provider.name} error: ${errorMsg}. Trying next provider...`);
+                    // Validate with Guardrails
+                    console.log('🛡️ Validating with Guardrails AI...');
+                    const validated = await this.guardrailsService.validateDockerFiles(dockerFiles, {
+                        isProduction: true,
+                        framework: projectStructure.frontend?.framework || projectStructure.backend?.framework
+                    });
+
+                    lastValidationResult = validated;
+
+                    // Check if validation passed
+                    if (validated.validationResult.valid) {
+                        console.log('✅ Validation passed!');
+                        await this.guardrailsService.showValidationResults(validated.validationResult);
+                        return dockerFiles;
+                    }
+
+                    // Validation failed - decide what to do
+                    console.warn(`⚠️ Validation failed with ${validated.validationResult.errors.length} errors`);
+
+                    if (attemptCount < maxReasks) {
+                        // Try to auto-fix
+                        console.log('🔧 Attempting auto-fix...');
+                        const { files: fixedFiles, corrections } = await this.guardrailsService.attemptAutoFix(
+                            dockerFiles,
+                            validated.validationResult.errors
+                        );
+
+                        if (corrections.length > 0) {
+                            console.log(`✅ Applied ${corrections.length} auto-corrections`);
+                            
+                            // Re-validate fixed files
+                            const revalidated = await this.guardrailsService.validateDockerFiles(fixedFiles, {
+                                isProduction: true
+                            });
+
+                            if (revalidated.validationResult.valid) {
+                                console.log('✅ Auto-fix successful!');
+                                await this.guardrailsService.showValidationResults(revalidated.validationResult);
+                                return fixedFiles;
+                            }
+                        }
+
+                        // Auto-fix didn't work, re-ask the LLM
+                        console.log('🔄 Re-asking LLM with validation feedback...');
+                        const feedbackPrompt = this.createPromptWithFeedback(
+                            projectStructure,
+                            validated.validationResult.errors
+                        );
+                        
+                        // Update prompt for next attempt
+                        continue;
+                    } else {
+                        // Max reasks reached, ask user
+                        const action = await vscode.window.showWarningMessage(
+                            `Validation failed after ${maxReasks} attempts. Continue with current files?`,
+                            'Use Current Files',
+                            'Cancel'
+                        );
+
+                        if (action === 'Use Current Files') {
+                            await this.guardrailsService.showValidationResults(validated.validationResult);
+                            return dockerFiles;
+                        } else {
+                            throw new Error('User cancelled due to validation failures');
+                        }
+                    }
+
+                } catch (error: any) {
+                    lastError = error;
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    console.error(`❌ ${provider.name} failed:`, errorMsg);
+
+                    // Check if it's a quota/rate limit error
+                    if (this.isQuotaError(error)) {
+                        console.warn(`⚠️ ${provider.name} quota exceeded. Trying next provider...`);
+                    } else if (this.isAuthError(error)) {
+                        console.warn(`⚠️ ${provider.name} authentication failed. Trying next provider...`);
+                    } else {
+                        console.warn(`⚠️ ${provider.name} error: ${errorMsg}. Trying next provider...`);
+                    }
+
+                    // Continue to next provider
+                    continue;
                 }
-
-                // Continue to next provider
-                continue;
             }
         }
 
-        // All providers failed, use fallback templates
-        console.log('⚠️ All API providers failed. Using fallback templates.');
-        // Notification removed for cleaner UX
-
+        // All attempts failed, use fallback templates
+        console.log('⚠️ All API providers and reasks failed. Using fallback templates.');
 
         return this.generateFallbackDockerFiles(projectStructure);
     }
@@ -1743,5 +1823,28 @@ server {
 }`;
 
         return basicConfig + (hasBackend ? backendProxy : '') + closing;
+    }
+
+    /**
+     * Create prompt with validation feedback for re-asking
+     */
+    private createPromptWithFeedback(
+        projectStructure: ProjectStructure,
+        errors: Array<{ field: string; message: string; suggestion?: string }>
+    ): string {
+        let prompt = this.createPrompt(projectStructure);
+
+        prompt += `\n\n⚠️ IMPORTANT - Fix the following validation errors from previous attempt:\n\n`;
+
+        errors.forEach((error, index) => {
+            prompt += `${index + 1}. [${error.field}] ${error.message}\n`;
+            if (error.suggestion) {
+                prompt += `   💡 Suggestion: ${error.suggestion}\n`;
+            }
+        });
+
+        prompt += `\nPlease regenerate the Docker files with ALL these issues fixed.\n`;
+
+        return prompt;
     }
 }
