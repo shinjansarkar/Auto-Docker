@@ -140,6 +140,21 @@
           "type": "string",
           "default": "",
           "description": "Custom path for Docker files (relative to workspace root). Leave empty for root."
+        },
+        "autoDocker.enableGuardrails": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Guardrails AI validation for generated Docker files"
+        },
+        "autoDocker.guardrailsStrictMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable strict validation mode (fails on warnings)"
+        },
+        "autoDocker.maxReasks": {
+          "type": "number",
+          "default": 2,
+          "description": "Maximum number of re-asks when validation fails (1-5)"
         }
       }
     }
@@ -167,6 +182,7 @@
     "package:vsix": "vsce package"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/sinon": "^17.0.4",
@@ -186,6 +202,11 @@
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
     "axios": "^1.7.8",
-    "openai": "^4.67.3"
+    "js-yaml": "^4.1.1",
+    "openai": "^4.67.3",
+    "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "@guardrails-ai/sdk": "^0.4.0"
   }
 }
