@@ -8,6 +8,7 @@ import { createAdvancedProductionPrompt } from './advancedProductionPrompt';
 import { GuardrailsService } from './guardrailsService';
 import { ValidatedDockerFiles } from './guardrailsTypes';
 import { SchemaValidator } from './schemaValidator';
+import { LangChainService } from './langchainService';
 
 export interface DockerFiles {
     dockerfile: string;
@@ -20,10 +21,18 @@ export class LLMService {
     private openaiClient?: OpenAI;
     private geminiClient?: GoogleGenerativeAI;
     private guardrailsService: GuardrailsService;
+    private langchainService?: LangChainService;
+    private outputChannel?: vscode.OutputChannel;
 
     constructor(outputChannel?: vscode.OutputChannel) {
+        this.outputChannel = outputChannel;
         this.initializeClients();
         this.guardrailsService = new GuardrailsService(outputChannel);
+        
+        // Initialize LangChain if enabled
+        if (LangChainService.shouldUseLangChain()) {
+            this.langchainService = new LangChainService(outputChannel);
+        }
     }
 
     private initializeClients() {
@@ -43,6 +52,17 @@ export class LLMService {
     }
 
     async generateDockerFiles(projectStructure: ProjectStructure): Promise<DockerFiles> {
+        // Check if LangChain should be used
+        if (this.langchainService && LangChainService.shouldUseLangChain()) {
+            try {
+                console.log('🔗 Using LangChain for structured generation...');
+                return await this.langchainService.generateWithStructuredOutput(projectStructure);
+            } catch (error) {
+                console.warn('⚠️ LangChain generation failed, falling back to direct LLM:', error);
+                // Continue with traditional approach as fallback
+            }
+        }
+
         const config = vscode.workspace.getConfiguration('autoDocker');
         const preferredProvider = config.get<string>('apiProvider', 'openai');
         const maxReasks = config.get<number>('maxReasks', 2);
