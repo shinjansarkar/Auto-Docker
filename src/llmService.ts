@@ -9,6 +9,7 @@ import { GuardrailsService } from './guardrailsService';
 import { ValidatedDockerFiles } from './guardrailsTypes';
 import { SchemaValidator } from './schemaValidator';
 import { LangChainService } from './langchainService';
+import { StaticAnalysisService } from './staticAnalysisService';
 
 export interface DockerFiles {
     dockerfile: string;
@@ -22,6 +23,7 @@ export class LLMService {
     private geminiClient?: GoogleGenerativeAI;
     private guardrailsService: GuardrailsService;
     private langchainService?: LangChainService;
+    private staticAnalysisService?: StaticAnalysisService;
     private outputChannel?: vscode.OutputChannel;
 
     constructor(outputChannel?: vscode.OutputChannel) {
@@ -32,6 +34,11 @@ export class LLMService {
         // Initialize LangChain if enabled
         if (LangChainService.shouldUseLangChain()) {
             this.langchainService = new LangChainService(outputChannel);
+        }
+        
+        // Initialize Static Analysis if enabled
+        if (StaticAnalysisService.shouldRunAnalysis()) {
+            this.staticAnalysisService = new StaticAnalysisService(outputChannel);
         }
     }
 
@@ -124,6 +131,32 @@ export class LLMService {
                     if (validated.validationResult.valid) {
                         console.log('✅ Validation passed!');
                         await this.guardrailsService.showValidationResults(validated.validationResult);
+                        
+                        // Run static analysis if enabled
+                        if (this.staticAnalysisService) {
+                            try {
+                                console.log('🔍 Running static analysis...');
+                                const analysisReport = await this.staticAnalysisService.analyzeAll(dockerFiles);
+                                await this.staticAnalysisService.showAnalysisResults(analysisReport);
+                                
+                                // Auto-fix if needed
+                                if (analysisReport.overall.autoFixableIssues > 0) {
+                                    const shouldFix = await vscode.window.showInformationMessage(
+                                        `Found ${analysisReport.overall.autoFixableIssues} auto-fixable issues. Apply fixes?`,
+                                        'Yes', 'No'
+                                    );
+                                    
+                                    if (shouldFix === 'Yes') {
+                                        const fixedFiles = await this.staticAnalysisService.autoFix(dockerFiles, analysisReport);
+                                        return fixedFiles;
+                                    }
+                                }
+                            } catch (analysisError) {
+                                console.warn('⚠️ Static analysis failed:', analysisError);
+                                // Continue with original files
+                            }
+                        }
+                        
                         return dockerFiles;
                     }
 
