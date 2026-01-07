@@ -176,6 +176,21 @@
           ],
           "default": "openai",
           "description": "LangChain provider to use (uses same API key as main provider)"
+        },
+        "autoDocker.enableStaticAnalysis": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable static analysis and linting for generated Docker files"
+        },
+        "autoDocker.autoFixIssues": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically fix common issues detected by static analysis"
+        },
+        "autoDocker.staticAnalysisStrictMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fail generation if static analysis finds critical issues"
         }
       }
     }
