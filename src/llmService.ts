@@ -10,6 +10,11 @@ import { ValidatedDockerFiles } from './guardrailsTypes';
 import { SchemaValidator } from './schemaValidator';
 import { LangChainService } from './langchainService';
 import { StaticAnalysisService } from './staticAnalysisService';
+import { DockerComposeSpecValidator } from './dockerComposeSpecValidator';
+import { AIObservabilityService } from './aiObservabilityService';
+import { SecurityScanningService } from './securityScanningService';
+import { DependencyGraphService } from './dependencyGraphService';
+import { PromptEngineeringService } from './promptEngineeringService';
 
 export interface DockerFiles {
     dockerfile: string;
@@ -24,10 +29,17 @@ export class LLMService {
     private guardrailsService: GuardrailsService;
     private langchainService?: LangChainService;
     private staticAnalysisService?: StaticAnalysisService;
+    private composeSpecValidator?: DockerComposeSpecValidator;
+    private observabilityService?: AIObservabilityService;
+    private securityScanningService?: SecurityScanningService;
+    private dependencyGraphService?: DependencyGraphService;
+    private promptEngineeringService?: PromptEngineeringService;
     private outputChannel?: vscode.OutputChannel;
+    private context?: vscode.ExtensionContext;
 
-    constructor(outputChannel?: vscode.OutputChannel) {
+    constructor(outputChannel?: vscode.OutputChannel, context?: vscode.ExtensionContext) {
         this.outputChannel = outputChannel;
+        this.context = context;
         this.initializeClients();
         this.guardrailsService = new GuardrailsService(outputChannel);
         
@@ -39,6 +51,34 @@ export class LLMService {
         // Initialize Static Analysis if enabled
         if (StaticAnalysisService.shouldRunAnalysis()) {
             this.staticAnalysisService = new StaticAnalysisService(outputChannel);
+        }
+        
+        // Initialize Docker Compose Spec Validator if enabled
+        const config = vscode.workspace.getConfiguration('autoDocker');
+        const composeSpecEnabled = config.get('enableComposeSpecValidation', true);
+        if (composeSpecEnabled) {
+            this.composeSpecValidator = new DockerComposeSpecValidator();
+        }
+        
+        // Initialize AI Observability if enabled
+        if (AIObservabilityService.isEnabled()) {
+         
+        
+        // Initialize Security Scanning if enabled
+        if (SecurityScanningService.isEnabled()) {
+            this.securityScanningService = new SecurityScanningService();
+        }
+        
+        // Initialize Dependency Graph Analysis if enabled
+        if (DependencyGraphService.isEnabled()) {
+            this.dependencyGraphService = new DependencyGraphService();
+        }   this.observabilityService = new AIObservabilityService(context);
+        }
+        
+        // Initialize Prompt Engineering if enabled
+        const promptEngineeringEnabled = config.get('enablePromptEngineering', true);
+        if (promptEngineeringEnabled) {
+            this.promptEngineeringService = new PromptEngineeringService();
         }
     }
 
@@ -59,6 +99,37 @@ export class LLMService {
     }
 
     async generateDockerFiles(projectStructure: ProjectStructure): Promise<DockerFiles> {
+        // Start observability session
+        if (this.observabilityService) {
+            this.observabilityService.startSession({
+                projectType: projectStructure.type,
+                frontend: projectStructure.frontend?.framework,
+                backend: projectStructure.backend?.framework
+            });
+        }
+        
+        try {
+            const result = await this.generateDockerFilesInternal(projectStructure);
+            
+            // End session with success
+            if (this.observabilityService) {
+                this.observabilityService.endSession(true);
+            }
+            
+            return result;
+        } catch (error) {
+            // End session with failure
+            if (this.observabilityService) {
+                this.observabilityService.trackError(error as Error, {
+                    operation: 'generate'
+                });
+                this.observabilityService.endSession(false);
+            }
+            throw error;
+        }
+    }
+
+    private async generateDockerFilesInternal(projectStructure: ProjectStructure): Promise<DockerFiles> {
         // Check if LangChain should be used
         if (this.langchainService && LangChainService.shouldUseLangChain()) {
             try {
@@ -73,7 +144,7 @@ export class LLMService {
         const config = vscode.workspace.getConfiguration('autoDocker');
         const preferredProvider = config.get<string>('apiProvider', 'openai');
         const maxReasks = config.get<number>('maxReasks', 2);
-        const prompt = this.createPrompt(projectStructure);
+        const prompt = await this.createPrompt(projectStructure);
 
         let attemptCount = 0;
         let lastValidationResult: ValidatedDockerFiles | null = null;
@@ -120,24 +191,59 @@ export class LLMService {
 
                     // Validate with Guardrails
                     console.log('🛡️ Validating with Guardrails AI...');
+                    const guardStartTime = Date.now();
                     const validated = await this.guardrailsService.validateDockerFiles(dockerFiles, {
                         isProduction: true,
                         framework: projectStructure.frontend?.framework || projectStructure.backend?.framework
                     });
+                    const guardEndTime = Date.now();
 
                     lastValidationResult = validated;
+                    
+                    // Track guardrails validation
+                    if (this.observabilityService) {
+                        await this.observabilityService.trackValidation(
+                            'guardrails',
+                            validated.validationResult.valid,
+                            validated.validationResult.score,
+                            validated.validationResult.errors.length,
+                            validated.validationResult.warnings.length,
+                            validated.validationResult.infos.length,
+                            0, // auto-fixes tracked separately
+                            guardEndTime - guardStartTime
+                        );
+                    }
 
                     // Check if validation passed
                     if (validated.validationResult.valid) {
                         console.log('✅ Validation passed!');
                         await this.guardrailsService.showValidationResults(validated.validationResult);
                         
+                        // Track the current files (may be updated by fixes)
+                        let currentFiles = dockerFiles;
+                        
                         // Run static analysis if enabled
                         if (this.staticAnalysisService) {
                             try {
                                 console.log('🔍 Running static analysis...');
-                                const analysisReport = await this.staticAnalysisService.analyzeAll(dockerFiles);
+                                const staticStartTime = Date.now();
+                                const analysisReport = await this.staticAnalysisService.analyzeAll(currentFiles);
+                                const staticEndTime = Date.now();
                                 await this.staticAnalysisService.showAnalysisResults(analysisReport);
+                                
+                                // Track static analysis
+                                if (this.observabilityService) {
+                                    await this.observabilityService.trackValidation(
+                                        'static-analysis',
+                                        analysisReport.overall.criticalIssues === 0,
+                                        analysisReport.overall.overallScore,
+                                        analysisReport.overall.criticalIssues,
+                                        0, // warnings not separated
+                                        0,
+                                        analysisReport.overall.autoFixableIssues,
+                                        staticEndTime - staticStartTime
+                                    );
+                                }
                                 
                                 // Auto-fix if needed
                                 if (analysisReport.overall.autoFixableIssues > 0) {
@@ -147,8 +253,8 @@ export class LLMService {
                                     );
                                     
                                     if (shouldFix === 'Yes') {
-                                        const fixedFiles = await this.staticAnalysisService.autoFix(dockerFiles, analysisReport);
-                                        return fixedFiles;
+                                        const fixedFiles = await this.staticAnalysisService.autoFix(currentFiles, analysisReport);
+                                        currentFiles = fixedFiles; // Update with fixed files
                                     }
                                 }
                             } catch (analysisError) {
@@ -157,7 +263,158 @@ export class LLMService {
                             }
                         }
                         
-                        return dockerFiles;
+                        // Run Docker Compose Spec validation if enabled
+                        if (this.composeSpecValidator && currentFiles.dockerCompose) {
+                            try {
+                                console.log('📊 Validating Docker Compose against official spec...');
+                                const composeStartTime = Date.now();
+                                const specResult = await this.composeSpecValidator.validateComposeFile(currentFiles.dockerCompose);
+                                const composeEndTime = Date.now();
+                                this.composeSpecValidator.showResults(specResult);
+                                
+                                // Track compose spec validation
+                                if (this.observabilityService) {
+                                    const errors = specResult.issues.filter(i => i.severity === 'error').length;
+                                    const warnings = specResult.issues.filter(i => i.severity === 'warning').length;
+                                    const infos = specResult.issues.filter(i => i.severity === 'info').length;
+                                    
+                                    await this.observabilityService.trackValidation(
+                                        'compose-spec',
+                                        specResult.valid,
+                                        specResult.score,
+                                        errors,
+                                        warnings,
+                                        infos,
+                                        specResult.autoFixableCount,
+                                        composeEndTime - composeStartTime
+                                    );
+                                }
+                                
+                                // Check if spec validation passed
+                                if (!specResult.valid) {
+                                    const errorCount = specResult.issues.filter(i => i.severity === 'error').length;
+                                    const message = `Docker Compose has ${errorCount} spec violations. Score: ${specResult.score}/100`;
+                                    
+                                    const strictMode = vscode.workspace.getConfiguration('autoDocker').get('composeSpecStrictMode', false);
+                                    if (strictMode && errorCount > 0) {
+                                        throw new Error(message);
+                                    } else {
+                                        vscode.window.showWarningMessage(message);
+                                    }
+                                } else {
+                                    console.log(`✅ Compose Spec validation passed! Score: ${specResult.score}/100`);
+                                }
+                            } catch (specError) {
+                                console.warn('⚠️ Compose Spec validation failed:', specError);
+                                const strictMode = vscode.workspace.getConfiguration('autoDocker').get('composeSpecStrictMode', false);
+                                if (strictMode) {
+                                    throw specError; // Re-throw in strict mode
+                                }
+                                // Continue with files in non-strict mode
+                            }
+                        }
+                        
+                        // Run security scanning if enabled
+                        if (this.securityScanningService) {
+                            try {
+                                console.log('🔒 Running security scan...');
+                                const securityStartTime = Date.now();
+                                const securityResult = await this.securityScanningService.scanDockerFiles({
+                                    dockerfile: currentFiles.dockerfile,
+                                    dockerCompose: currentFiles.dockerCompose,
+                                    nginxConf: currentFiles.nginxConf
+                                });
+                                const securityEndTime = Date.now();
+                                
+                                // Show results
+                                this.securityScanningService.showResults(securityResult);
+                                
+                                // Track security validation
+                                if (this.observabilityService) {
+                                    await this.observabilityService.trackValidation(
+                                        'security',
+                                        securityResult.passed,
+                                        securityResult.score,
+                                        securityResult.criticalCount,
+                                        securityResult.highCount,
+                                        securityResult.mediumCount,
+                                        0, // No auto-fixes in security scan
+                                        securityEndTime - securityStartTime
+                                    );
+                                }
+                                
+                                // Check if security scan passed
+                                if (!securityResult.passed) {
+                                    const message = `Security scan found ${securityResult.criticalCount} critical and ${securityResult.highCount} high severity issues. Score: ${securityResult.score}/100`;
+                                    
+                                    const strictMode = vscode.workspace.getConfiguration('autoDocker').get('securityStrictMode', false);
+                                    if (strictMode && securityResult.criticalCount > 0) {
+                                        throw new Error(message);
+                                    } else {
+                                        vscode.window.showWarningMessage(message);
+                                    }
+                                } else {
+                                    console.log(`✅ Security scan passed! Score: ${securityResult.score}/100`);
+                                }
+                            } catch (securityError) {
+                                console.warn('⚠️ Security scan failed:', securityError);
+                                const strictMode = vscode.workspace.getConfiguration('autoDocker').get('securityStrictMode', false);
+                                if (strictMode) {
+                                    throw securityError; // Re-throw in strict mode
+                                }
+                                // Continue with files in non-strict mode
+                            }
+                        }
+                        
+                        // Run dependency analysis if enabled
+                        if (this.dependencyGraphService && structure.projectPath) {
+                            try {
+                                console.log('📦 Running dependency analysis...');
+                                const depStartTime = Date.now();
+                                const depResult = await this.dependencyGraphService.analyzeProject(structure.projectPath);
+                                const depEndTime = Date.now();
+                                
+                                // Show results
+                                this.dependencyGraphService.showResults(depResult);
+                                
+                                // Track dependency validation
+                                if (this.observabilityService) {
+                                    await this.observabilityService.trackValidation(
+                                        'dependencies',
+                                        depResult.vulnerabilityCount.critical === 0,
+                                        depResult.score,
+                                        depResult.vulnerabilityCount.critical,
+                                        depResult.vulnerabilityCount.high,
+                                        depResult.vulnerabilityCount.medium,
+                                        0, // No auto-fixes in dependency analysis
+                                        depEndTime - depStartTime
+                                    );
+                                }
+                                
+                                // Check if dependency analysis passed
+                                if (depResult.vulnerabilityCount.critical > 0) {
+                                    const message = `Dependency analysis found ${depResult.vulnerabilityCount.critical} critical vulnerabilities. Score: ${depResult.score}/100`;
+                                    
+                                    const strictMode = vscode.workspace.getConfiguration('autoDocker').get('dependencyStrictMode', false);
+                                    if (strictMode) {
+                                        throw new Error(message);
+                                    } else {
+                                        vscode.window.showWarningMessage(message);
+                                    }
+                                } else {
+                                    console.log(`✅ Dependency analysis passed! Score: ${depResult.score}/100`);
+                                }
+                            } catch (depError) {
+                                console.warn('⚠️ Dependency analysis failed:', depError);
+                                const strictMode = vscode.workspace.getConfiguration('autoDocker').get('dependencyStrictMode', false);
+                                if (strictMode) {
+                                    throw depError; // Re-throw in strict mode
+                                }
+                                // Continue with files in non-strict mode
+                            }
+                        }
+                        
+                        return currentFiles;
                     }
 
                     // Validation failed - decide what to do
@@ -188,7 +445,7 @@ export class LLMService {
 
                         // Auto-fix didn't work, re-ask the LLM
                         console.log('🔄 Re-asking LLM with validation feedback...');
-                        const feedbackPrompt = this.createPromptWithFeedback(
+                        const feedbackPrompt = await this.createPromptWithFeedback(
                             projectStructure,
                             validated.validationResult.errors
                         );
@@ -520,23 +777,67 @@ Generate the following files:
         const config = vscode.workspace.getConfiguration('autoDocker');
         const model = config.get<string>('model', 'gpt-4');
 
-        const response = await this.openaiClient.chat.completions.create({
-            model: model,
-            messages: [
-                {
-                    role: 'system',
-                    content: 'You are an expert DevOps engineer specializing in Docker containerization. Generate production-ready Docker configuration files based on project analysis.'
-                },
-                {
-                    role: 'user',
-                    content: prompt
-                }
-            ],
-            max_tokens: 4000,
-            temperature: 0.3
-        });
+        const startTime = new Date();
+        
+        try {
+            const response = await this.openaiClient.chat.completions.create({
+                model: model,
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are an expert DevOps engineer specializing in Docker containerization. Generate production-ready Docker configuration files based on project analysis.'
+                    },
+                    {
+                        role: 'user',
+                        content: prompt
+                    }
+                ],
+                max_tokens: 4000,
+                temperature: 0.3
+            });
 
-        return response.choices[0]?.message?.content || '';
+            const endTime = new Date();
+            const content = response.choices[0]?.message?.content || '';
+            
+            // Track metrics
+            if (this.observabilityService) {
+                await this.observabilityService.trackLLMCall(
+                    'openai',
+                    model,
+                    'generate',
+                    startTime,
+                    endTime,
+                    response.usage?.prompt_tokens || 0,
+                    response.usage?.completion_tokens || 0,
+                    'success'
+                );
+            }
+            
+            return content;
+        } catch (error) {
+            const endTime = new Date();
+            
+            // Track error
+            if (this.observabilityService) {
+                await this.observabilityService.trackLLMCall(
+                    'openai',
+                    model,
+                    'generate',
+                    startTime,
+                    endTime,
+                    0,
+                    0,
+                    'failure'
+                );
+                this.observabilityService.trackError(error as Error, {
+                    provider: 'openai',
+                    model,
+                    operation: 'generate'
+                });
+            }
+            
+            throw error;
+        }
     }
 
     private async callGemini(prompt: string): Promise<string> {
@@ -547,11 +848,58 @@ Generate the following files:
         const config = vscode.workspace.getConfiguration('autoDocker');
         const model = config.get<string>('model', 'gemini-pro');
 
-        const generativeModel = this.geminiClient.getGenerativeModel({ model });
-        const result = await generativeModel.generateContent(prompt);
-        const response = await result.response;
-
-        return response.text();
+        const startTime = new Date();
+        
+        try {
+            const generativeModel = this.geminiClient.getGenerativeModel({ model });
+            const result = await generativeModel.generateContent(prompt);
+            const response = await result.response;
+            const content = response.text();
+            
+            const endTime = new Date();
+            
+            // Track metrics (Gemini doesn't provide token counts, estimate)
+            if (this.observabilityService) {
+                const estimatedPromptTokens = Math.ceil(prompt.length / 4);
+                const estimatedCompletionTokens = Math.ceil(content.length / 4);
+                
+                await this.observabilityService.trackLLMCall(
+                    'gemini',
+                    model,
+                    'generate',
+                    startTime,
+                    endTime,
+                    estimatedPromptTokens,
+                    estimatedCompletionTokens,
+                    'success'
+                );
+            }
+            
+            return content;
+        } catch (error) {
+            const endTime = new Date();
+            
+            // Track error
+            if (this.observabilityService) {
+                await this.observabilityService.trackLLMCall(
+                    'gemini',
+                    model,
+                    'generate',
+                    startTime,
+                    endTime,
+                    0,
+                    0,
+                    'failure'
+                );
+                this.observabilityService.trackError(error as Error, {
+                    provider: 'gemini',
+                    model,
+                    operation: 'generate'
+                });
+            }
+            
+            throw error;
+        }
     }
 
     private async callAnthropic(prompt: string): Promise<string> {
@@ -631,13 +979,82 @@ Generate the following files:
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    private createPrompt(projectStructure: ProjectStructure): string {
+    private buildPromptContext(projectStructure: ProjectStructure): any {
+        // Determine project size
+        let projectSize: 'small' | 'medium' | 'large' | 'enterprise' = 'medium';
+        const fileCount = projectStructure.files.length;
+        if (fileCount < 20) projectSize = 'small';
+        else if (fileCount < 100) projectSize = 'medium';
+        else if (fileCount < 500) projectSize = 'large';
+        else projectSize = 'enterprise';
+        
+        // Determine complexity
+        let complexity: 'simple' | 'moderate' | 'complex' = 'moderate';
+        if (projectStructure.backend && projectStructure.frontend && projectStructure.database) {
+            complexity = 'complex';
+        } else if (!projectStructure.backend || !projectStructure.frontend) {
+            complexity = 'simple';
+        }
+        
+        return {
+            projectType: projectStructure.projectType,
+            framework: projectStructure.frontend?.framework || projectStructure.backend?.framework,
+            language: projectStructure.backend === 'flask' || projectStructure.backend === 'django' || projectStructure.backend === 'fastapi' ? 'python' :
+                     projectStructure.frontend?.includes('react') || projectStructure.frontend?.includes('vue') ? 'javascript' : 'unknown',
+            dependencies: Object.keys(projectStructure.dependencies?.packageJson?.dependencies || {}),
+            projectSize,
+            complexity,
+            requirements: [
+                projectStructure.hasEnvFile ? 'Environment variables management' : null,
+                projectStructure.database ? `Database: ${projectStructure.database}` : null,
+                projectStructure.frontend && projectStructure.backend ? 'Full-stack architecture' : null
+            ].filter(Boolean) as string[],
+            constraints: [
+                'Production-ready configuration',
+                'Security best practices',
+                'Optimized for performance'
+            ]
+        };
+    }
+
+    private async createPrompt(projectStructure: ProjectStructure): Promise<string> {
         const config = vscode.workspace.getConfiguration('autoDocker');
         const includeNginx = config.get<boolean>('includeNginx', true);
 
         // Detect build output directory
         const buildDir = this.getBuildDirectory(projectStructure);
+        
+        // Use Prompt Engineering Service if enabled
+        if (this.promptEngineeringService) {
+            try {
+                const context = this.buildPromptContext(projectStructure);
+                const optimized = await this.promptEngineeringService.generateOptimizedPrompt(
+                    'dockerfile',
+                    context
+                );
+                
+                console.log('🧩 Prompt Engineering:', {
+                    tokenReduction: optimized.tokenReduction,
+                    quality: optimized.qualityScore,
+                    strategies: optimized.improvements
+                });
+                
+                // Track optimization in observability
+                if (this.observabilityService) {
+                    this.observabilityService.trackMetric('promptOptimization', {
+                        tokenReduction: optimized.tokenReduction,
+                        quality: optimized.qualityScore
+                    });
+                }
+                
+                return optimized.optimized;
+            } catch (error) {
+                console.warn('⚠️ Prompt engineering failed, using standard prompt:', error);
+                // Fall through to standard prompt generation
+            }
+        }
 
+        // Standard prompt generation (fallback)
         // Detect Python framework
         const isPython = projectStructure.backend === 'flask' || projectStructure.backend === 'django' || projectStructure.backend === 'fastapi';
         const pythonFramework = projectStructure.backend;
@@ -1891,11 +2308,11 @@ server {
     /**
      * Create prompt with validation feedback for re-asking
      */
-    private createPromptWithFeedback(
+    private async createPromptWithFeedback(
         projectStructure: ProjectStructure,
         errors: Array<{ field: string; message: string; suggestion?: string }>
-    ): string {
-        let prompt = this.createPrompt(projectStructure);
+    ): Promise<string> {
+        let prompt = await this.createPrompt(projectStructure);
 
         prompt += `\n\n⚠️ IMPORTANT - Fix the following validation errors from previous attempt:\n\n`;
 
