@@ -63,8 +63,67 @@
         "command": "autoDocker.generateTestProjects",
         "title": "Generate Test Projects",
         "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.showDashboard",
+        "title": "Show AI Observability Dashboard",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.exportMetrics",
+        "title": "Export AI Metrics",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.showSecurityReport",
+        "title": "Show Security Scan Report",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.analyzeDependencies",
+        "title": "Analyze Project Dependencies",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.optimizePrompt",
+        "title": "Optimize Prompt Engineering",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.showQuickPick",
+        "title": "Show Quick Actions Menu",
+        "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.showFullDashboard",
+        "title": "Open Full Dashboard",
+        "category": "Auto Docker"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "autoDocker",
+          "title": "Auto Docker",
+          "icon": "$(docker)"
+        }
+      ]
+    },
+    "views": {
+      "autoDocker": [
+        {
+          "id": "autoDocker.projectExplorer",
+          "name": "Project Explorer",
+          "contextualTitle": "Docker Project"
+        },
+        {
+          "type": "webview",
+          "id": "autoDocker.dashboardView",
+          "name": "Dashboard",
+          "contextualTitle": "Quick Overview"
+        }
+      ]
+    },
     "menus": {
       "explorer/context": [
         {
@@ -191,6 +250,76 @@
           "type": "boolean",
           "default": false,
           "description": "Fail generation if static analysis finds critical issues"
+        },
+        "autoDocker.enableComposeSpecValidation": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Docker Compose Spec validation against official specification"
+        },
+        "autoDocker.composeSpecStrictMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fail generation if Docker Compose has spec violations"
+        },
+        "autoDocker.enableObservability": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable AI observability and monitoring for tracking LLM usage, costs, and performance"
+        },
+        "autoDocker.enableSecurityScanning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable comprehensive security scanning for Docker files (secrets, vulnerabilities, compliance)"
+        },
+        "autoDocker.securityStrictMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fail generation if security scan finds critical issues"
+        },
+        "autoDocker.enableDependencyAnalysis": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable dependency graph analysis for vulnerability detection and optimization"
+        },
+        "autoDocker.dependencyStrictMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fail generation if critical dependency vulnerabilities found"
+        },
+        "autoDocker.enablePromptEngineering": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable advanced prompt engineering with optimization and chain-of-thought reasoning"
+        },
+        "autoDocker.enableRAGEnhancedPrompts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enhance prompts with RAG (Retrieval Augmented Generation) context"
+        },
+        "autoDocker.maxPromptTokens": {
+          "type": "number",
+          "default": 2000,
+          "description": "Maximum tokens allowed in prompts (for cost optimization)"
+        },
+        "autoDocker.enableUIEnhancements": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable enhanced UI/UX features including dashboards, notifications, and interactive views"
+        },
+        "autoDocker.showStatusBarUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show real-time updates in the status bar during generation"
+        },
+        "autoDocker.enableInteractiveNotifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable interactive notifications with action buttons"
+        },
+        "autoDocker.autoOpenDashboard": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically open dashboard after successful generation"
         }
       }
     }
