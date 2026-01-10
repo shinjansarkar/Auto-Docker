@@ -408,6 +408,100 @@ export class PortConflictValidator extends DockerValidator {
 }
 
 /**
+ * Validator: No USER nginx
+ * Prevents explicit USER nginx directive which causes permission issues
+ */
+export class NoUserNginxValidator extends DockerValidator {
+    name = 'no-user-nginx';
+    description = 'Prevents USER nginx directive that causes permission errors';
+    severity: 'error' | 'warning' = 'error';
+
+    async validate(dockerfile: string): Promise<ValidationError[]> {
+        const errors: ValidationError[] = [];
+        const lines = dockerfile.split('\n');
+
+        lines.forEach((line, index) => {
+            const trimmed = line.trim();
+            
+            // Check for "USER nginx" specifically
+            if (trimmed === 'USER nginx' || trimmed.startsWith('USER nginx ')) {
+                errors.push(this.createError(
+                    'dockerfile',
+                    'Do not use "USER nginx" - nginx:alpine runs as nginx by default',
+                    index,
+                    'Remove USER nginx line. Set permissions with: RUN chown -R nginx:nginx /usr/share/nginx/html'
+                ));
+            }
+        });
+
+        return errors;
+    }
+}
+
+/**
+ * Validator: No Duplicate COPY Commands
+ * Detects duplicate COPY --from=builder statements
+ */
+export class NoDuplicateCopyValidator extends DockerValidator {
+    name = 'no-duplicate-copy';
+    description = 'Detects duplicate COPY --from=builder statements';
+    severity: 'error' | 'warning' = 'error';
+
+    async validate(dockerfile: string): Promise<ValidationError[]> {
+        const errors: ValidationError[] = [];
+        const lines = dockerfile.split('\n');
+        const copyFromCommands = new Map<string, number[]>();
+
+        lines.forEach((line, index) => {
+            const trimmed = line.trim();
+            
+            // Match COPY --from=builder patterns
+            const copyMatch = trimmed.match(/^COPY\s+--from=(\S+)\s+(\S+)\s+(\S+)/);
+            if (copyMatch) {
+                const [, stage, source, dest] = copyMatch;
+                
+                // Track copies from builder to same destination
+                if (stage.toLowerCase().includes('builder') || stage.toLowerCase().includes('build')) {
+                    const key = `${dest}`;
+                    if (!copyFromCommands.has(key)) {
+                        copyFromCommands.set(key, []);
+                    }
+                    copyFromCommands.get(key)!.push(index);
+                }
+            }
+        });
+
+        // Check for duplicates
+        copyFromCommands.forEach((lineNumbers, destination) => {
+            if (lineNumbers.length > 1) {
+                errors.push(this.createError(
+                    'dockerfile',
+                    `Multiple COPY --from=builder commands to ${destination} detected`,
+                    lineNumbers[1],
+                    `Use only ONE COPY statement for the detected build output directory (dist, build, or out)`
+                ));
+            }
+        });
+
+        // Check for common problematic patterns (dist AND build)
+        const hasDistCopy = lines.some(line => line.includes('COPY --from=builder') && line.includes('/app/dist'));
+        const hasBuildCopy = lines.some(line => line.includes('COPY --from=builder') && line.includes('/app/build'));
+        
+        if (hasDistCopy && hasBuildCopy) {
+            const lineNum = lines.findIndex(line => line.includes('/app/build'));
+            errors.push(this.createError(
+                'dockerfile',
+                'Copying from both /app/dist AND /app/build - only one will exist',
+                lineNum,
+                'Detect the correct build output folder (Vite→dist, CRA→build) and use only that one'
+            ));
+        }
+
+        return errors;
+    }
+}
+
+/**
  * Validator Registry
  */
 export class ValidatorRegistry {
@@ -426,7 +520,9 @@ export class ValidatorRegistry {
             new HealthCheckValidator(),
             new VersionPinningValidator(),
             new ServiceDependencyValidator(),
-            new PortConflictValidator()
+            new PortConflictValidator(),
+            new NoUserNginxValidator(),         // NEW: Catch USER nginx
+            new NoDuplicateCopyValidator()      // NEW: Catch duplicate COPY
         ];
 
         defaultValidators.forEach(validator => {

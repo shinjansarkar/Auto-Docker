@@ -99,13 +99,14 @@ export class LangChainService {
         // Google Gemini
         const geminiKey = config.get<string>('geminiApiKey');
         if (geminiKey) {
+            const geminiModel = config.get<string>('geminiModel', 'gemini-1.5-pro');
             this.geminiModel = new ChatGoogleGenerativeAI({
                 apiKey: geminiKey,
-                model: 'gemini-pro',
+                model: geminiModel,
                 temperature: 0,
                 maxOutputTokens: 4096
             });
-            this.log('✅ Gemini model initialized');
+            this.log(`✅ Gemini model initialized (${geminiModel})`);
         }
 
         // Anthropic Claude

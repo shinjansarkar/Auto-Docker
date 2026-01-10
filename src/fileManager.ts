@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { DockerFiles } from './llmService';
 import { ProjectStructure } from './projectAnalyzer';
 import {
@@ -13,6 +14,63 @@ export class FileManager {
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
+    }
+
+    /**
+     * Smart detection of build output folder from package.json
+     * Returns the exact output folder based on framework/build tool
+     */
+    private detectBuildOutputFolder(frontendPath: string): string {
+        const packageJsonPath = path.join(frontendPath, 'package.json');
+        
+        if (!fs.existsSync(packageJsonPath)) {
+            return 'dist'; // Default fallback
+        }
+
+        try {
+            const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+            const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+
+            // Check for Next.js
+            if (dependencies['next']) {
+                return '.next';
+            }
+
+            // Check for Create React App
+            if (dependencies['react-scripts']) {
+                return 'build';
+            }
+
+            // Check for Vite (most common modern build tool)
+            if (dependencies['vite']) {
+                return 'dist';
+            }
+
+            // Check for Angular
+            if (dependencies['@angular/core']) {
+                return 'dist';
+            }
+
+            // Check for Vue CLI
+            if (dependencies['@vue/cli-service']) {
+                return 'dist';
+            }
+
+            // Check for Gatsby
+            if (dependencies['gatsby']) {
+                return 'public';
+            }
+
+            // Check for Nuxt
+            if (dependencies['nuxt']) {
+                return '.output/public';
+            }
+
+            // Default for modern projects
+            return 'dist';
+        } catch (error) {
+            return 'dist'; // Fallback on error
+        }
     }
 
     async writeDockerFiles(dockerFiles: DockerFiles, projectStructure?: ProjectStructure): Promise<void> {
@@ -604,12 +662,6 @@ export class FileManager {
                 { path: frontendDockerignorePath, content: dockerignore, name: `${projectStructure.frontendPath}/.dockerignore` },
                 { path: backendDockerignorePath, content: dockerignore, name: `${projectStructure.backendPath}/.dockerignore` },
                 { path: dockerComposePath, content: this.generateMonorepoDockerCompose(projectStructure), name: 'docker-compose.yml' },
-                // ALWAYS generate nginx.conf for monorepos - critical for reverse proxy
-                {
-                    path: nginxConfPath,
-                    content: this.generateMonorepoNginxConf(projectStructure),
-                    name: 'nginx.conf'
-                },
                 // Generate frontend SPA nginx configuration
                 {
                     path: frontendNginxConfPath,
@@ -617,6 +669,21 @@ export class FileManager {
                     name: `${projectStructure.frontendPath}/nginx.conf`
                 },
             ];
+
+            // ONLY generate root nginx.conf if docker-compose has 3-service architecture
+            // (separate nginx service for reverse proxy)
+            // For standard MERN stack (frontend + backend), skip root nginx.conf
+            const dockerComposeContent = this.generateMonorepoDockerCompose(projectStructure);
+            const hasNginxService = dockerComposeContent.includes('nginx:') && 
+                                   dockerComposeContent.includes('image: nginx');
+            
+            if (hasNginxService) {
+                filesToWrite.push({
+                    path: nginxConfPath,
+                    content: this.generateMonorepoNginxConf(projectStructure),
+                    name: 'nginx.conf'
+                });
+            }
 
             // Write all files
             for (const file of filesToWrite) {
@@ -659,6 +726,10 @@ export class FileManager {
     }
 
     private generateMonorepoFrontendDockerfile(projectStructure: ProjectStructure): string {
+        // Detect correct build output folder from package.json
+        const frontendPath = path.join(this.workspaceRoot, projectStructure.frontendPath || 'client');
+        const outputFolder = this.detectBuildOutputFolder(frontendPath);
+
         return `# Stage 1: Builder
 FROM node:18-alpine AS builder
 WORKDIR /app
@@ -684,9 +755,8 @@ FROM nginx:alpine
 # Copy nginx configuration (separate file)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy built application from builder
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY --from=builder /app/build /usr/share/nginx/html
+# Copy built application from builder (smart detection: ${outputFolder})
+COPY --from=builder /app/${outputFolder} /usr/share/nginx/html
 
 EXPOSE 80
 
@@ -694,9 +764,7 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
   CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
 
-# Run as non-root user
-USER nginx
-
+# Nginx runs as nginx user by default - DO NOT add USER nginx
 CMD ["nginx", "-g", "daemon off;"]`;
     }
 

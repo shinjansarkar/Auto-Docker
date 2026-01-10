@@ -22,9 +22,13 @@ import { UIEnhancementService } from './uiEnhancementService';
 
 let outputChannel: vscode.OutputChannel;
 let uiService: UIEnhancementService;
+let extensionContext: vscode.ExtensionContext;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Auto Docker Extension is now active!');
+    
+    // Store context for use in other functions
+    extensionContext = context;
 
     // Create output channel for logging
     outputChannel = vscode.window.createOutputChannel('Auto Docker');
@@ -183,7 +187,7 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                 progress.report({ increment: 40, message: "Generating Docker configuration..." });
                 outputChannel.appendLine('🤖 Generating Docker files...');
 
-                const llmService = new LLMService(outputChannel, context);
+                const llmService = new LLMService(outputChannel, extensionContext);
                 const dockerFiles = await llmService.generateDockerFiles(projectStructure);
 
                 // CRITICAL FIX #34: Validate generated content
@@ -324,7 +328,7 @@ async function configureApiKeys(): Promise<void> {
         if (apiKey) {
             await config.update('apiProvider', 'gemini', vscode.ConfigurationTarget.Global);
             await config.update('geminiApiKey', apiKey, vscode.ConfigurationTarget.Global);
-            await config.update('model', 'gemini-pro', vscode.ConfigurationTarget.Global);
+            await config.update('model', 'gemini-1.5-flash', vscode.ConfigurationTarget.Global);
 
             vscode.window.showInformationMessage('Google Gemini API configuration saved successfully!');
         }
