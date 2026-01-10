@@ -157,6 +157,7 @@ const PRICING = {
     },
     gemini: {
         'gemini-pro': { input: 0.00025, output: 0.0005 },
+        'gemini-1.5-flash': { input: 0.000075, output: 0.0003 },
         'gemini-1.5-pro': { input: 0.00125, output: 0.00375 }
     },
     anthropic: {

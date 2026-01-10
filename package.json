@@ -13,7 +13,7 @@
   },
   "homepage": "https://github.com/auto-docker/auto-docker-extension#readme",
   "license": "MIT",
-  "version": "2.6.1",
+  "version": "2.7.0",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -176,6 +176,16 @@
           "default": "",
           "description": "Google Gemini API key for Gemini integration"
         },
+        "autoDocker.geminiModel": {
+          "type": "string",
+          "default": "gemini-1.5-pro",
+          "enum": [
+            "gemini-1.5-pro",
+            "gemini-1.5-flash-latest",
+            "gemini-pro"
+          ],
+          "description": "Gemini model to use for Docker file generation"
+        },
         "autoDocker.anthropicApiKey": {
           "type": "string",
           "default": "",
@@ -184,7 +194,12 @@
         "autoDocker.model": {
           "type": "string",
           "default": "gpt-4",
-          "description": "Model name to use (e.g., gpt-4, gpt-3.5-turbo, gemini-pro)"
+          "description": "Model name to use (e.g., gpt-4, gpt-3.5-turbo, gemini-1.5-pro)"
+        },
+        "autoDocker.validationStrictMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Block file generation if critical validation errors are found (recommended for production)"
         },
         "autoDocker.overwriteFiles": {
           "type": "boolean",

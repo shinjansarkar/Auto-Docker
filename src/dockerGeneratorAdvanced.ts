@@ -109,14 +109,12 @@ RUN rm /etc/nginx/conf.d/default.conf
 # Copy production nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy built application from builder (detect common build outputs)
-COPY --from=builder /app/dist . 2>/dev/null || \\
-     (COPY --from=builder /app/build . 2>/dev/null || \\
-      COPY --from=builder /app/out . 2>/dev/null || \\
-      COPY --from=builder /app/.next/static ./_next/static 2>/dev/null || true)
+# Copy built application from builder using detected output directory
+COPY --from=builder /app/${this.getBuildOutputDir(framework, config)} .
 
-# Set proper permissions
-RUN chmod -R 755 /usr/share/nginx/html
+# Set proper permissions for nginx user
+RUN chown -R nginx:nginx /usr/share/nginx/html && \\
+    chmod -R 755 /usr/share/nginx/html
 
 # Expose port
 EXPOSE 80
@@ -125,8 +123,36 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
   CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
 
-# Start Nginx
+# Nginx runs as nginx user by default - DO NOT add USER nginx
 CMD ["nginx", "-g", "daemon off;"]`;
+  }
+
+  /**
+   * Get exact build output directory for framework
+   */
+  private static getBuildOutputDir(framework: string, config: any): string {
+    // Check config first
+    if (config.outputDirectory) {
+      return config.outputDirectory;
+    }
+
+    // Framework-specific defaults
+    const outputDirs: { [key: string]: string } = {
+      'React': 'build',           // Create React App
+      'Vue': 'dist',              // Vue CLI
+      'Angular': 'dist',          // Angular CLI
+      'Next.js': '.next',         // Next.js
+      'Svelte': 'build',          // SvelteKit
+      'Nuxt': '.output',          // Nuxt.js
+      'Vite': 'dist'              // Vite (React/Vue/etc)
+    };
+
+    // Check if it's a Vite project (common pattern)
+    if (config.buildTool === 'vite' || config.dependencies?.vite) {
+      return 'dist';
+    }
+
+    return outputDirs[framework] || 'dist';
   }
 
   /**

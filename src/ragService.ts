@@ -49,6 +49,7 @@ export class RAGService {
         'gpt-4-turbo': 128000,
         'gpt-3.5-turbo': 4000,
         'gemini-pro': 30000,
+        'gemini-1.5-flash': 1000000,
         'gemini-1.5-pro': 1000000
     };
 

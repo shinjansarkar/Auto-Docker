@@ -453,19 +453,67 @@ export class LLMService {
                         // Update prompt for next attempt
                         continue;
                     } else {
-                        // Max reasks reached, ask user
+                        // Max reasks reached, show detailed errors to user
+                        console.error('❌ Validation failed after maximum retry attempts');
+                        
+                        // Log errors to output channel
+                        if (this.outputChannel) {
+                            this.outputChannel.appendLine('\n⚠️⚠️⚠️ VALIDATION ERRORS FOUND:');
+                            validated.validationResult.errors.forEach((err, idx) => {
+                                this.outputChannel.appendLine(`\n${idx + 1}. [${err.severity.toUpperCase()}] ${err.field}`);
+                                this.outputChannel.appendLine(`   ❌ ${err.message}`);
+                                if (err.line) this.outputChannel.appendLine(`   📍 Line ${err.line}`);
+                                if (err.suggestion) this.outputChannel.appendLine(`   💡 Suggestion: ${err.suggestion}`);
+                            });
+                            this.outputChannel.appendLine('\n');
+                        }
+                        
+                        // Check strict mode
+                        const strictMode = config.get<boolean>('validationStrictMode', false);
+                        
+                        if (strictMode) {
+                            await this.guardrailsService.showValidationResults(validated.validationResult);
+                            throw new Error(
+                                `Validation failed in strict mode with ${validated.validationResult.errors.length} errors. ` +
+                                `Disable 'autoDocker.validationStrictMode' in settings to proceed with warnings.`
+                            );
+                        }
+                        
+                        // Show user the choice with error details
+                        const errorSummary = validated.validationResult.errors
+                            .slice(0, 3)
+                            .map(e => `  • ${e.message}`)
+                            .join('\n');
+                        
                         const action = await vscode.window.showWarningMessage(
-                            `Validation failed after ${maxReasks} attempts. Continue with current files?`,
-                            'Use Current Files',
+                            `Validation found ${validated.validationResult.errors.length} error(s):\n${errorSummary}${validated.validationResult.errors.length > 3 ? '\n  ...' : ''}`,
+                            { modal: true },
+                            'View All Errors',
+                            'Use Anyway',
                             'Cancel'
                         );
 
-                        if (action === 'Use Current Files') {
+                        if (action === 'View All Errors') {
                             await this.guardrailsService.showValidationResults(validated.validationResult);
-                            return dockerFiles;
-                        } else {
+                            if (this.outputChannel) {
+                                this.outputChannel.show();
+                            }
+                            // Ask again after showing errors
+                            const secondAction = await vscode.window.showWarningMessage(
+                                `Continue with ${validated.validationResult.errors.length} validation errors?`,
+                                'Use Anyway',
+                                'Cancel'
+                            );
+                            if (secondAction !== 'Use Anyway') {
+                                throw new Error('User cancelled due to validation failures');
+                            }
+                        } else if (action === 'Cancel' || !action) {
                             throw new Error('User cancelled due to validation failures');
                         }
+                        
+                        // User chose 'Use Anyway'
+                        await this.guardrailsService.showValidationResults(validated.validationResult);
+                        return dockerFiles;
                     }
 
                 } catch (error: any) {
@@ -846,7 +894,7 @@ Generate the following files:
         }
 
         const config = vscode.workspace.getConfiguration('autoDocker');
-        const model = config.get<string>('model', 'gemini-pro');
+        const model = config.get<string>('model', 'gemini-1.5-flash');
 
         const startTime = new Date();
         
@@ -1064,6 +1112,33 @@ Generate the following files:
         const isSvelteKit = projectStructure.frontend === 'sveltekit';
 
         return `
+⚠️⚠️⚠️ === CRITICAL DOCKERFILE REQUIREMENTS - VIOLATIONS WILL BE REJECTED === ⚠️⚠️⚠️
+
+🚨 THESE RULES ARE MANDATORY AND ENFORCED BY VALIDATION:
+
+1. ❌ NEVER EVER use "USER nginx" directive
+   - nginx:alpine already runs as nginx user by default
+   - Adding USER nginx causes PERMISSION DENIED errors
+   - CORRECT: Just use CMD ["nginx", "-g", "daemon off;"]
+   - CORRECT: Set permissions with: RUN chown -R nginx:nginx /usr/share/nginx/html && chmod -R 755 /usr/share/nginx/html
+
+2. ❌ NEVER duplicate COPY --from=builder commands
+   - Use ONLY ONE COPY statement per build output
+   - Detect correct folder: Vite→dist, CRA→build, Angular→dist, Next→.next
+   - WRONG: COPY --from=builder /app/dist ... AND COPY --from=builder /app/build ...
+   - CORRECT: COPY --from=builder /app/${buildDir} /usr/share/nginx/html
+
+3. ✅ ALWAYS set proper permissions for nginx
+   - MUST include: RUN chown -R nginx:nginx /usr/share/nginx/html && chmod -R 755 /usr/share/nginx/html
+
+4. ✅ ALWAYS use detected build output folder
+   - This project uses: ${buildDir}
+   - Do NOT guess or use multiple folders
+
+VIOLATING THESE RULES WILL CAUSE AUTOMATIC REJECTION AND REGENERATION!
+
+═══════════════════════════════════════════════════════════════════════════
+
 Generate PRODUCTION-READY Docker files following AutoDocker Policy:
 
 PROJECT: ${projectStructure.projectType}${projectStructure.frontend ? ` (${projectStructure.frontend})` : ''}${projectStructure.backend ? ` + ${projectStructure.backend}` : ''}${projectStructure.database ? ` + ${projectStructure.database}` : ''}
@@ -1077,14 +1152,25 @@ ${projectStructure.frontend?.includes('vite') ? `⚠️ CRITICAL: This is a VITE
 
 🔴 POLICY RULES (MUST FOLLOW):
 
+🚨 CRITICAL NGINX RULES (VALIDATED AUTOMATICALLY):
+1. ❌ NEVER add "USER nginx" in Dockerfile - nginx:alpine runs as nginx by default
+2. ❌ NEVER duplicate COPY --from=builder commands - use ONLY ONE for detected build output
+3. ✅ ALWAYS detect exact build output folder: ${buildDir}
+4. ✅ ALWAYS set permissions: RUN chown -R nginx:nginx /usr/share/nginx/html && chmod -R 755 /usr/share/nginx/html
+5. ✅ ALWAYS include HEALTHCHECK in production Dockerfiles
+
+NOTE: These rules are automatically validated. Violations will trigger regeneration!
+
 ${isFrontend && !projectStructure.backend ? `
 === FRONTEND-ONLY PROJECT ===
 - Use multi-stage Dockerfile: Stage 1 (node builder) -> Stage 2 (nginx:stable-alpine)
 - Generate SEPARATE nginx.conf file with production config
 - Dockerfile: COPY nginx.conf /etc/nginx/conf.d/default.conf
+- Copy ONLY detected build output: COPY --from=builder /app/${buildDir} /usr/share/nginx/html
 - nginx.conf MUST include: try_files $uri $uri/ /index.html for SPA routing
 - docker-compose.yml: SINGLE service "web" on port 80 (NO separate nginx service)
 - NO /api/ proxy (no backend exists)
+- NO USER nginx line in Dockerfile
 ` : ''}
 
 ${projectStructure.backend && projectStructure.frontend ? `
@@ -1485,10 +1571,16 @@ server {
 }
 EOF
 
-# Copy built files
+# Copy built files from detected build directory
 COPY --from=build /app/${buildDir} /usr/share/nginx/html
 
+# Set proper permissions for nginx user
+RUN chown -R nginx:nginx /usr/share/nginx/html && \\
+    chmod -R 755 /usr/share/nginx/html
+
 EXPOSE 80
+
+# Nginx runs as nginx user by default - DO NOT add USER nginx
 CMD ["nginx", "-g", "daemon off;"]`;
             } else {
                 // Backend Node.js application
@@ -1548,9 +1640,9 @@ RUN apk add --no-cache dumb-init
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY package*.json ./
 
-# Copy built application
-COPY --chown=nodejs:nodejs --from=builder /app/dist ./dist
-COPY --chown=nodejs:nodejs --from=builder /app/build ./build
+# Copy built application (try dist first, then build, then src)
+COPY --chown=nodejs:nodejs --from=builder /app/dist ./dist 2>/dev/null || \
+COPY --chown=nodejs:nodejs --from=builder /app/build ./build 2>/dev/null || \
 COPY --chown=nodejs:nodejs --from=builder /app/src ./src
 
 # Set environment
@@ -2166,9 +2258,14 @@ FROM nginx:alpine
 # Copy custom nginx config (EXTERNAL FILE)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Copy built application from builder
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY --from=builder /app/build /usr/share/nginx/html
+# Copy built application from builder (detect build output directory)
+COPY --from=builder /app/dist /usr/share/nginx/html 2>/dev/null || \
+     COPY --from=builder /app/build /usr/share/nginx/html 2>/dev/null || \
+     COPY --from=builder /app/out /usr/share/nginx/html
+
+# Set proper permissions for nginx user
+RUN chown -R nginx:nginx /usr/share/nginx/html && \
+    chmod -R 755 /usr/share/nginx/html
 
 EXPOSE 80
 
@@ -2176,9 +2273,7 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
 
-# Run as non-root user
-USER nginx
-
+# Nginx runs as nginx user by default (DO NOT add USER nginx)
 CMD ["nginx", "-g", "daemon off;"]`;
     }
 

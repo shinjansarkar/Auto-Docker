@@ -77,7 +77,9 @@ export class GuardrailsService {
                 { name: 'health-check-presence', enabled: true, severity: 'warning', onFail: 'filter' },
                 { name: 'version-pinning', enabled: true, severity: 'warning', onFail: 'filter' },
                 { name: 'service-dependencies', enabled: true, severity: 'error', onFail: 'reask' },
-                { name: 'port-conflicts', enabled: true, severity: 'error', onFail: 'reask' }
+                { name: 'port-conflicts', enabled: true, severity: 'error', onFail: 'reask' },
+                { name: 'no-user-nginx', enabled: true, severity: 'error', onFail: 'reask' },
+                { name: 'no-duplicate-copy', enabled: true, severity: 'error', onFail: 'reask' }
             ]
         };
     }
@@ -356,8 +358,76 @@ export class GuardrailsService {
 
         for (const error of errors) {
             if (error.field === 'dockerfile') {
-                // Auto-fix: Add USER directive
-                if (error.message.includes('USER directive')) {
+                // Auto-fix: Remove USER nginx (CRITICAL FIX)
+                if (error.message.includes('USER nginx')) {
+                    const original = fixed.dockerfile;
+                    const lines = fixed.dockerfile.split('\n');
+                    const fixedLines = lines.map(line => {
+                        if (line.trim() === 'USER nginx' || line.trim().startsWith('USER nginx ')) {
+                            return '# Nginx runs as nginx user by default - USER nginx removed';
+                        }
+                        return line;
+                    });
+                    fixed.dockerfile = fixedLines.join('\n');
+                    
+                    if (original !== fixed.dockerfile) {
+                        corrections.push({
+                            field: 'dockerfile',
+                            original: 'USER nginx',
+                            corrected: 'Removed USER nginx directive',
+                            reason: 'nginx:alpine runs as nginx by default, explicit USER causes permission errors'
+                        });
+                    }
+                }
+                
+                // Auto-fix: Remove duplicate COPY --from=builder (CRITICAL FIX)
+                if (error.message.includes('Multiple COPY') || error.message.includes('duplicate')) {
+                    const original = fixed.dockerfile;
+                    const lines = fixed.dockerfile.split('\n');
+                    let foundFirst = false;
+                    const fixedLines = lines.map(line => {
+                        if (line.includes('COPY --from=builder') && line.includes('/usr/share/nginx/html')) {
+                            if (!foundFirst) {
+                                foundFirst = true;
+                                return line; // Keep first COPY
+                            } else {
+                                return '# Duplicate COPY removed - using detected build output folder';
+                            }
+                        }
+                        return line;
+                    });
+                    fixed.dockerfile = fixedLines.join('\n');
+                    
+                    if (original !== fixed.dockerfile) {
+                        corrections.push({
+                            field: 'dockerfile',
+                            original: 'Multiple COPY --from=builder commands',
+                            corrected: 'Consolidated to single COPY with correct build folder',
+                            reason: 'Only one build output directory exists per framework'
+                        });
+                    }
+                }
+                
+                // Auto-fix: Add proper permissions if missing
+                if (error.message.includes('permission') && !fixed.dockerfile.includes('chown -R nginx:nginx')) {
+                    const lines = fixed.dockerfile.split('\n');
+                    const copyIndex = lines.findIndex(l => l.includes('COPY --from=') && l.includes('/usr/share/nginx/html'));
+                    
+                    if (copyIndex > 0) {
+                        lines.splice(copyIndex + 1, 0, '', '# Set proper permissions for nginx user', 'RUN chown -R nginx:nginx /usr/share/nginx/html && \\', '    chmod -R 755 /usr/share/nginx/html');
+                        fixed.dockerfile = lines.join('\n');
+                        
+                        corrections.push({
+                            field: 'dockerfile',
+                            original: 'Missing permission setup',
+                            corrected: 'Added chown and chmod for nginx user',
+                            reason: 'Ensure nginx user can access files'
+                        });
+                    }
+                }
+
+                // Auto-fix: Add USER directive for non-nginx containers
+                if (error.message.includes('USER directive') && !error.message.includes('nginx')) {
                     const lines = fixed.dockerfile.split('\n');
                     const cmdIndex = lines.findIndex(l => l.trim().startsWith('CMD '));
                     
@@ -388,6 +458,28 @@ export class GuardrailsService {
                             original: 'Using :latest tag',
                             corrected: 'Pinned to specific version',
                             reason: 'Reproducibility'
+                        });
+                    }
+                }
+                
+                // Auto-fix: Add HEALTHCHECK if missing
+                if (error.message.includes('HEALTHCHECK') || error.message.includes('health check')) {
+                    const lines = fixed.dockerfile.split('\n');
+                    const cmdIndex = lines.findIndex(l => l.trim().startsWith('CMD '));
+                    
+                    if (cmdIndex > 0 && !fixed.dockerfile.includes('HEALTHCHECK')) {
+                        const healthCheck = fixed.dockerfile.includes('nginx') 
+                            ? 'HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\\n  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1'
+                            : 'HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\\n  CMD curl -f http://localhost:3000/health || exit 1';
+                        
+                        lines.splice(cmdIndex, 0, '', '# Health check', healthCheck, '');
+                        fixed.dockerfile = lines.join('\n');
+                        
+                        corrections.push({
+                            field: 'dockerfile',
+                            original: 'Missing HEALTHCHECK',
+                            corrected: 'Added HEALTHCHECK instruction',
+                            reason: 'Production best practice for container health monitoring'
                         });
                     }
                 }
