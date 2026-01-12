@@ -54,7 +54,7 @@ export class EnhancedLLMService {
             throw new Error('Gemini API key not configured. Please set it in VS Code settings.');
         }
 
-        const model = this.geminiClient.getGenerativeModel({ model: 'gemini-pro' });
+        const model = this.geminiClient.getGenerativeModel({ model: 'gemini-1.5-flash' });
         const result = await model.generateContent(prompt);
         const response = await result.response;
         const text = response.text();

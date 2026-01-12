@@ -9,6 +9,9 @@ export const CRITICAL_DOCKER_RULES = `
 1. ❌ NEVER use "USER nginx" in Dockerfile
    - nginx:alpine runs as nginx user by default
    - Adding USER nginx causes permission errors
+   - CORRECT: Just run CMD ["nginx", "-g", "daemon off;"]
+   - WRONG: USER nginx before CMD
+   - FIX: Set permissions with RUN chown -R nginx:nginx /usr/share/nginx/html
 
 2. ❌ NEVER embed nginx.conf content inside Dockerfile
    - ALWAYS generate nginx.conf as a SEPARATE file
@@ -22,7 +25,9 @@ export const CRITICAL_DOCKER_RULES = `
 4. ❌ NEVER duplicate COPY --from=builder statements
    - Use ONLY ONE COPY statement for build output
    - CORRECT: COPY --from=builder /app/dist /usr/share/nginx/html
-   - WRONG: Multiple COPY statements for same files
+   - WRONG: COPY --from=builder /app/dist ... AND COPY --from=builder /app/build ...
+   - DETECT the exact output folder first (dist for Vite, build for CRA, .next for Next.js)
+   - Example: Vite → dist, CRA → build, Angular → dist, Vue → dist
 
 5. ✅ ALWAYS use exact detected build output folder
    - Vite → dist
