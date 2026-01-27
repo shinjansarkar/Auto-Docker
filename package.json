@@ -98,6 +98,18 @@
         "command": "autoDocker.showFullDashboard",
         "title": "Open Full Dashboard",
         "category": "Auto Docker"
+      },
+      {
+        "command": "autoDocker.aiGenerate",
+        "title": "AI-Powered Docker Generation",
+        "category": "Auto Docker",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "autoDocker.detectTechStack",
+        "title": "Detect Tech Stack with AI",
+        "category": "Auto Docker",
+        "icon": "$(search)"
       }
     ],
     "viewsContainers": {
@@ -150,6 +162,12 @@
         },
         {
           "command": "autoDocker.generateTestProjects"
+        },
+        {
+          "command": "autoDocker.aiGenerate"
+        },
+        {
+          "command": "autoDocker.detectTechStack"
         }
       ]
     },

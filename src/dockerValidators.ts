@@ -502,6 +502,96 @@ export class NoDuplicateCopyValidator extends DockerValidator {
 }
 
 /**
+ * Validator: Backend-Only Nginx Configuration
+ * Validates nginx reverse proxy for backend-only projects
+ */
+export class BackendNginxProxyValidator extends DockerValidator {
+    name = 'backend-nginx-proxy';
+    description = 'Validates nginx reverse proxy configuration for backend-only projects';
+    severity: 'error' | 'warning' = 'warning';
+
+    async validate(nginxConf: string, metadata?: any): Promise<ValidationError[]> {
+        const errors: ValidationError[] = [];
+        
+        // Skip if not backend-only nginx
+        if (!nginxConf.includes('backend_upstream') && !nginxConf.includes('Backend-Only Reverse Proxy')) {
+            return errors;
+        }
+
+        const lines = nginxConf.split('\n');
+
+        // Check for rate limiting
+        const hasRateLimiting = nginxConf.includes('limit_req_zone') && nginxConf.includes('limit_req');
+        if (!hasRateLimiting) {
+            errors.push(this.createError(
+                'nginxConf',
+                'Backend-only nginx should include rate limiting for API protection',
+                0,
+                'Add: limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;'
+            ));
+        }
+
+        // Check for security headers
+        const hasSecurityHeaders = nginxConf.includes('X-Frame-Options') && 
+                                   nginxConf.includes('X-Content-Type-Options');
+        if (!hasSecurityHeaders) {
+            errors.push(this.createError(
+                'nginxConf',
+                'Backend-only nginx should include security headers',
+                0,
+                'Add security headers: X-Frame-Options, X-Content-Type-Options, X-XSS-Protection'
+            ));
+        }
+
+        // Check for health check endpoint
+        const hasHealthCheck = nginxConf.includes('location /health');
+        if (!hasHealthCheck) {
+            errors.push(this.createError(
+                'nginxConf',
+                'Backend-only nginx should have dedicated health check endpoint',
+                0,
+                'Add: location /health { proxy_pass http://backend_upstream/health; }'
+            ));
+        }
+
+        // Check for upstream keepalive
+        const hasKeepalive = nginxConf.includes('keepalive');
+        if (!hasKeepalive) {
+            errors.push(this.createError(
+                'nginxConf',
+                'Backend upstream should use keepalive for better performance',
+                0,
+                'Add: keepalive 32; in upstream backend_upstream block'
+            ));
+        }
+
+        // Check for proper timeout settings
+        const hasTimeouts = nginxConf.includes('proxy_connect_timeout') &&
+                           nginxConf.includes('proxy_read_timeout');
+        if (!hasTimeouts) {
+            errors.push(this.createError(
+                'nginxConf',
+                'Backend-only nginx should configure proxy timeouts',
+                0,
+                'Add: proxy_connect_timeout 60s; proxy_read_timeout 60s;'
+            ));
+        }
+
+        // Warn if exposing internal paths
+        if (nginxConf.includes('location /internal') || nginxConf.includes('location /_')) {
+            errors.push(this.createError(
+                'nginxConf',
+                'Potential security risk: internal paths may be exposed',
+                0,
+                'Ensure internal endpoints are protected or not proxied'
+            ));
+        }
+
+        return errors;
+    }
+}
+
+/**
  * Validator Registry
  */
 export class ValidatorRegistry {
@@ -521,8 +611,9 @@ export class ValidatorRegistry {
             new VersionPinningValidator(),
             new ServiceDependencyValidator(),
             new PortConflictValidator(),
-            new NoUserNginxValidator(),         // NEW: Catch USER nginx
-            new NoDuplicateCopyValidator()      // NEW: Catch duplicate COPY
+            new NoUserNginxValidator(),         // Catch USER nginx
+            new NoDuplicateCopyValidator(),     // Catch duplicate COPY
+            new BackendNginxProxyValidator()    // NEW: Validate backend-only nginx
         ];
 
         defaultValidators.forEach(validator => {
