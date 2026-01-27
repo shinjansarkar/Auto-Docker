@@ -42,14 +42,22 @@ export class CleanComposeGenerator {
 
     /**
      * Generate docker-compose.yml for backend-only project
+     * NOW SUPPORTS: Optional nginx reverse proxy layer
      */
-    static generateBackendOnlyCompose(backend: DetectedBackend, databases?: DetectedDatabase[]): string {
+    static generateBackendOnlyCompose(
+        backend: DetectedBackend, 
+        databases?: DetectedDatabase[],
+        includeNginx?: boolean,
+        backendPort?: number
+    ): string {
+        const actualBackendPort = backendPort || backend.port || 8000;
+        
         const backendService: ComposeService = {
             name: 'backend',
             type: 'backend',
             buildContext: backend.path === '.' ? '.' : backend.path,
             dockerfile: 'Dockerfile',
-            ports: [`${backend.port || 8000}:${backend.port || 8000}`],
+            ports: includeNginx ? [] : [`${actualBackendPort}:${actualBackendPort}`], // Expose only if no nginx
             envFile: '.env'
         };
 
@@ -60,7 +68,7 @@ export class CleanComposeGenerator {
 
         const services = [backendService];
 
-        return this.generateComposeFile(services, databases || []);
+        return this.generateComposeFile(services, databases || [], includeNginx, actualBackendPort);
     }
 
     /**
@@ -169,9 +177,20 @@ export class CleanComposeGenerator {
 
     /**
      * Generate complete docker-compose.yml file
+     * NOW SUPPORTS: nginx reverse proxy for backend-only projects
      */
-    private static generateComposeFile(services: ComposeService[], databases: DetectedDatabase[]): string {
+    private static generateComposeFile(
+        services: ComposeService[], 
+        databases: DetectedDatabase[],
+        includeNginx?: boolean,
+        backendPort?: number
+    ): string {
         let compose = `version: "3.8"\n\nservices:\n`;
+
+        // Add nginx reverse proxy if enabled (for backend-only)
+        if (includeNginx) {
+            compose += this.generateNginxServiceBlock(backendPort || 8000);
+        }
 
         // Add application services
         for (const service of services) {
@@ -193,6 +212,29 @@ export class CleanComposeGenerator {
 
         return compose;
     }
+
+    /**
+     * Generate nginx reverse proxy service block
+     */
+    private static generateNginxServiceBlock(backendPort: number): string {
+        return `  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+`;
 
     /**
      * Generate service block for application service

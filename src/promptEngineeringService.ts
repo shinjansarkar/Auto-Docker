@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { RAGService } from './ragService';
 
 /**
  * Prompt Engineering Service
@@ -97,7 +96,8 @@ export class PromptEngineeringService {
     private templates: Map<string, PromptTemplate> = new Map();
     private fewShotExamples: Map<string, FewShotExample[]> = new Map();
     private metrics: PromptMetrics[] = [];
-    private ragService?: RAGService;
+    // RAG service disabled - not needed for core functionality
+    // private ragService?: RAGService;
     private config: vscode.WorkspaceConfiguration;
     private optimizationStrategies: OptimizationStrategy[] = [];
 

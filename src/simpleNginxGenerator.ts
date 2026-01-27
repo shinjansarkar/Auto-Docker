@@ -20,6 +20,34 @@ export interface NginxOptions {
 export class SimpleNginxGenerator {
 
     /**
+     * Determine if nginx.conf should be generated based on project type
+     */
+    static shouldGenerateNginx(projectType: string, hasFrontend: boolean, hasBackend: boolean): boolean {
+        // Frontend-only: YES (serve static files)
+        if (projectType === 'frontend' || projectType === 'frontend-only') {
+            return true;
+        }
+        
+        // Fullstack: YES (reverse proxy)
+        if (projectType === 'fullstack' && (hasFrontend || hasBackend)) {
+            return true;
+        }
+        
+        // Backend-only: YES (reverse proxy, load balancing, SSL termination)
+        if (projectType === 'backend' || projectType === 'backend-only') {
+            return true;
+        }
+        
+        // Monorepo: YES (always useful for routing)
+        if (projectType === 'monorepo') {
+            return true;
+        }
+        
+        // Default: always generate nginx for production best practices
+        return true;
+    }
+
+    /**
      * Check if user already has nginx.conf
      */
     static hasExistingNginxConfig(projectPath: string): boolean {
@@ -114,6 +142,117 @@ export class SimpleNginxGenerator {
     }
 
     /**
+     * Generate backend-only nginx configuration (reverse proxy with security)
+     * RULE: Production-ready reverse proxy with rate limiting, security headers, health checks
+     * Used for: Backend-only projects that benefit from nginx layer
+     */
+    static generateBackendOnlyNginxConfig(options?: NginxOptions): string {
+        const backendUrl = options?.backendUrl || 'backend';
+        const backendPort = options?.backendPort || 8000;
+        const apiPrefix = options?.apiPrefix || '/api';
+
+        return `# Backend-Only Reverse Proxy Configuration
+# Production-ready nginx for backend services
+# Features: Rate limiting, security headers, health checks, SSL-ready
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    # Rate limiting zone (10MB can store ~160k IP addresses)
+    limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
+    
+    # Upstream backend server
+    upstream backend_upstream {
+        server ${backendUrl}:${backendPort};
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        server_name _;
+
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+        # Hide nginx version
+        server_tokens off;
+
+        # Health check endpoint (no rate limiting for monitoring)
+        location /health {
+            access_log off;
+            proxy_pass http://backend_upstream/health;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 5s;
+        }
+
+        # API endpoints with rate limiting
+        location ${apiPrefix}/ {
+            # Apply rate limiting (burst allows temporary spikes)
+            limit_req zone=api_limit burst=20 nodelay;
+            
+            # Proxy to backend
+            proxy_pass http://backend_upstream/;
+            proxy_http_version 1.1;
+            
+            # WebSocket support
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            
+            # Forward client information
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Timeouts
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+            
+            # Buffering
+            proxy_buffering on;
+            proxy_buffer_size 4k;
+            proxy_buffers 8 4k;
+            proxy_busy_buffers_size 8k;
+        }
+
+        # Root endpoint (no /api prefix)
+        location / {
+            limit_req zone=api_limit burst=20 nodelay;
+            
+            proxy_pass http://backend_upstream/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+
+        # Custom error pages
+        error_page 502 503 504 /50x.html;
+        location = /50x.html {
+            return 502 '{"error":"Backend service unavailable"}';
+            add_header Content-Type application/json;
+        }
+    }
+}
+`;
+    }
+
+    /**
      * Generate nginx configuration for monorepo
      */
     static generateMonorepoNginxConfig(hasBackend: boolean): string {
@@ -164,24 +303,20 @@ export class SimpleNginxGenerator {
 
     /**
      * Generate nginx config with context information
+     * NOW SUPPORTS: Backend-only reverse proxy generation
      */
     static generateWithContext(
         hasFrontend: boolean,
         hasBackend: boolean,
-        projectPath: string
+        projectPath: string,
+        backendPort?: number
     ): {
         shouldGenerate: boolean;
         config?: string;
         reason?: string;
+        isBackendOnly?: boolean;
     } {
-        // Check if generation is needed
-        if (!hasFrontend) {
-            return {
-                shouldGenerate: false,
-                reason: 'No frontend detected'
-            };
-        }
-
+        // Check for existing nginx config
         if (this.hasExistingNginxConfig(projectPath)) {
             return {
                 shouldGenerate: false,
@@ -189,17 +324,43 @@ export class SimpleNginxGenerator {
             };
         }
 
-        // Generate appropriate config
+        // Backend-only: Generate reverse proxy with security features
+        if (!hasFrontend && hasBackend) {
+            const config = this.generateBackendOnlyNginxConfig({
+                hasBackend: true,
+                backendUrl: 'backend',
+                backendPort: backendPort || 8000,
+                apiPrefix: '/api'
+            });
+
+            return {
+                shouldGenerate: true,
+                config,
+                isBackendOnly: true,
+                reason: 'Generating reverse proxy for backend-only project'
+            };
+        }
+
+        // Frontend-only or fullstack
+        if (!hasFrontend) {
+            return {
+                shouldGenerate: false,
+                reason: 'No frontend detected and no backend-only proxy needed'
+            };
+        }
+
+        // Generate appropriate config for frontend/fullstack
         const config = this.generateNginxConfig({
             hasBackend,
             backendUrl: 'backend',
-            backendPort: 8000,
+            backendPort: backendPort || 8000,
             apiPrefix: '/api'
         });
 
         return {
             shouldGenerate: true,
-            config
+            config,
+            isBackendOnly: false
         };
     }
 

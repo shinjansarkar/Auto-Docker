@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { ProjectAnalyzer } from './projectAnalyzer';
-import { EnhancedProjectAnalyzer } from './enhancedProjectAnalyzer';
 import { LLMService } from './llmService';
 import { FileManager } from './fileManager';
 import { DockerTestRunner } from './testRunner';
@@ -19,6 +17,9 @@ import {
     FileWriteLock
 } from './criticalErrorHandling';
 import { UIEnhancementService } from './uiEnhancementService';
+import { AIDockerGenerationService } from './aiDockerGenerationService';
+import { AITechStackDetector } from './aiTechStackDetector';
+import { validateAnalysisBeforeGeneration } from './antiHallucinationPrompts';
 
 let outputChannel: vscode.OutputChannel;
 let uiService: UIEnhancementService;
@@ -90,6 +91,14 @@ export function activate(context: vscode.ExtensionContext) {
     const showFullDashboardCommand = vscode.commands.registerCommand('autoDocker.showFullDashboard', async () => {
         await showFullDashboard();
     });
+    
+    const aiGenerateCommand = vscode.commands.registerCommand('autoDocker.aiGenerate', async () => {
+        await aiGenerateDockerFiles();
+    });
+    
+    const aiDetectTechStackCommand = vscode.commands.registerCommand('autoDocker.detectTechStack', async () => {
+        await detectTechStackWithAI();
+    });
 
     // Add commands to subscriptions
     context.subscriptions.push(
@@ -105,7 +114,9 @@ export function activate(context: vscode.ExtensionContext) {
         analyzeDependenciesCommand,
         optimizePromptCommand,
         showQuickPickCommand,
-        showFullDashboardCommand
+        showFullDashboardCommand,
+        aiGenerateCommand,
+        aiDetectTechStackCommand
     );
 
     // Show welcome message on first install
@@ -117,20 +128,20 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 async function analyzeProject(skipPreview: boolean = false): Promise<void> {
-    // CRITICAL FIX for Runtime Errors: Comprehensive try-catch and type safety
+    // Use AI-powered generation for accurate tech stack detection and generation
     try {
         outputChannel.clear();
         outputChannel.show(true);
-        outputChannel.appendLine('🔍 Starting project analysis...');
+        outputChannel.appendLine('🔍 Starting AI-powered project analysis...');
 
-        // CRITICAL FIX #1: Multi-workspace folder handling
+        // Get workspace
         const workspaceRoot = await MultiWorkspaceManager.getActiveWorkspaceFolder();
         if (!workspaceRoot || typeof workspaceRoot !== 'string' || workspaceRoot.trim().length === 0) {
             vscode.window.showErrorMessage('Invalid or no workspace selected');
             return;
         }
 
-        // CRITICAL FIX #5: Check if generation is already in progress (concurrent locking)
+        // Check if generation is already in progress
         if (GenerationLock.isLocked(workspaceRoot)) {
             vscode.window.showWarningMessage('Docker file generation is already in progress. Please wait...');
             return;
@@ -142,70 +153,94 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
             return;
         }
 
-        // Check API configuration (CRITICAL FIX #32: Safe null checks)
+        // Check API configuration
         const apiConfigValid = await validateApiConfiguration();
         if (!apiConfigValid) {
             return;
         }
         
-        // Update UI - show analyzing status
+        // Update UI
         uiService.showAnalyzing();
 
         // Show progress
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: "Analyzing project and generating Docker files...",
+            title: "AI-powered Docker generation...",
             cancellable: false
         }, async (progress) => {
             try {
-                // Step 1: Analyze project structure
+                // Use AI Docker Generation Service
+                progress.report({ increment: 10, message: "Initializing AI service..." });
+                outputChannel.appendLine('🤖 Using AI-powered tech stack detection...');
+
+                const aiService = new AIDockerGenerationService(workspaceRoot);
+
+                // Pre-generation validation: Run comprehensive analysis first
                 progress.report({ increment: 20, message: "Analyzing project structure..." });
-                outputChannel.appendLine('📁 Analyzing project structure...');
-
-                // Use enhanced analyzer for better code understanding
-                const config = vscode.workspace.getConfiguration('autoDocker');
-                const model = config.get<string>('model', 'gpt-4') || 'gpt-4';
-
-                const enhancedAnalyzer = new EnhancedProjectAnalyzer(workspaceRoot, outputChannel);
-                const analysis = await enhancedAnalyzer.analyzeWithAdvancedFeatures(model);
-
-                // CRITICAL FIX #33: Safe property access with defaults
-                const projectStructure = analysis?.projectStructure;
-                if (!projectStructure) {
-                    throw new Error('Failed to analyze project structure');
+                const analyzer = new ComprehensiveAnalyzer(workspaceRoot);
+                const analysis = await analyzer.analyze();
+                
+                // Validate analysis before generation
+                const validation = validateAnalysisBeforeGeneration(analysis);
+                if (!validation.valid) {
+                    outputChannel.appendLine('\n⚠️  Pre-generation validation warnings:');
+                    validation.errors.forEach(err => outputChannel.appendLine(`  - ${err}`));
+                    
+                    // Show warning but allow to continue
+                    const shouldContinue = await vscode.window.showWarningMessage(
+                        `Analysis validation found issues:\n${validation.errors.join('\n')}\n\nContinue anyway?`,
+                        'Yes, Continue',
+                        'Cancel'
+                    );
+                    
+                    if (shouldContinue !== 'Yes, Continue') {
+                        outputChannel.appendLine('⚠️  Docker generation cancelled by user');
+                        vscode.window.showInformationMessage('Docker generation cancelled');
+                        return;
+                    }
                 }
 
-                outputChannel.appendLine(`Project type detected: ${projectStructure.projectType || 'unknown'}`);
-                if (projectStructure.frontend) {
-                    outputChannel.appendLine(`Frontend: ${projectStructure.frontend}`);
-                }
-                if (projectStructure.backend) {
-                    outputChannel.appendLine(`Backend: ${projectStructure.backend}`);
-                }
+                // Generate with AI
+                progress.report({ increment: 30, message: "Detecting tech stack with AI..." });
+                const result = await aiService.generate();
 
-                // Step 2: Generate Docker files using LLM
-                progress.report({ increment: 40, message: "Generating Docker configuration..." });
-                outputChannel.appendLine('🤖 Generating Docker files...');
-
-                const llmService = new LLMService(outputChannel, extensionContext);
-                const dockerFiles = await llmService.generateDockerFiles(projectStructure);
-
-                // CRITICAL FIX #34: Validate generated content
-                if (!dockerFiles ||
-                    !dockerFiles.dockerfile ||
-                    !dockerFiles.dockerCompose ||
-                    !dockerFiles.dockerIgnore) {
-                    throw new Error('LLM generated incomplete Docker files');
+                if (!result.success) {
+                    throw new Error('AI generation failed: ' + result.errors.join(', '));
                 }
 
-                outputChannel.appendLine('✅ Docker files generated');
+                // Log tech stack detection
+                outputChannel.appendLine(`\n🎯 Tech Stack Detected (Confidence: ${(result.techStack.confidence * 100).toFixed(0)}%):`);
+                outputChannel.appendLine(`  - Primary Language: ${result.techStack.primaryLanguage}`);
+                outputChannel.appendLine(`  - Runtime: ${result.techStack.primaryRuntime}`);
+                outputChannel.appendLine(`  - Frameworks: ${result.techStack.frameworks.join(', ')}`);
+                outputChannel.appendLine(`  - Project Type: ${result.techStack.projectType}`);
+                if (result.techStack.frontend) {
+                    outputChannel.appendLine(`  - Frontend: ${result.techStack.frontend.framework} (Build output: ${result.techStack.frontend.buildOutputDir})`);
+                }
+                if (result.techStack.backend) {
+                    outputChannel.appendLine(`  - Backend: ${result.techStack.backend.framework} on port ${result.techStack.backend.port}`);
+                }
+                if (result.techStack.databases.length > 0) {
+                    outputChannel.appendLine(`  - Databases: ${result.techStack.databases.map(db => db.type).join(', ')}`);
+                }
 
-                // Step 3: Preview and confirm
+                // Log performance
+                outputChannel.appendLine(`\n📊 Performance: ${result.generationTime}ms`);
+
+                // Show warnings
+                if (result.warnings.length > 0) {
+                    outputChannel.appendLine(`\n⚠️  Warnings:`);
+                    result.warnings.forEach(w => outputChannel.appendLine(`  - ${w}`));
+                }
+
+                outputChannel.appendLine('\n✅ Docker files generated with AI + Guardrails validation');
+
+                // Preview and confirm
                 progress.report({ increment: 70, message: "Preparing preview..." });
 
                 if (!skipPreview) {
                     try {
-                        const confirmed = await fileManager.showPreview(dockerFiles);
+                        const confirmed = await fileManager.showPreview(result.dockerFiles);
                         if (!confirmed) {
                             outputChannel.appendLine('⚠️  Docker generation cancelled');
                             vscode.window.showInformationMessage('Docker generation cancelled');
@@ -214,7 +249,6 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                     } catch (error) {
                         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
                         outputChannel.appendLine(`⚠️  Preview error: ${errorMsg}`);
-                        // Ask user if they want to continue anyway
                         const choice = await vscode.window.showWarningMessage(
                             'Preview failed. Write files anyway?',
                             'Yes',
@@ -226,25 +260,35 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                     }
                 }
 
-                // Step 4: Write files
+                // Write files
                 progress.report({ increment: 90, message: "Writing files..." });
                 outputChannel.appendLine('📝 Writing Docker files to workspace...');
 
-                await fileManager.writeDockerFiles(dockerFiles, projectStructure);
+                const projectStructure = {
+                    projectType: result.techStack.projectType,
+                    frontend: result.techStack.frontend?.framework,
+                    backend: result.techStack.backend?.framework,
+                    databases: result.techStack.databases.map(db => db.type)
+                };
+
+                await fileManager.writeDockerFiles(result.dockerFiles, projectStructure);
 
                 progress.report({ increment: 100, message: "Complete!" });
                 outputChannel.appendLine('✅ Docker files generated successfully!');
                 
-                // Update UI with success
-                uiService.showSuccess('Docker files generated');
-                await uiService.showSuccessNotification('Docker files generated successfully!', [
-                    { title: 'Open Files', callback: () => {
-                        vscode.commands.executeCommand('workbench.view.explorer');
-                    }},
-                    { title: 'View Dashboard', callback: () => {
-                        vscode.commands.executeCommand('autoDocker.showDashboard');
-                    }}
-                ]);
+                // Update UI
+                uiService.showSuccess('AI-powered Docker generation complete');
+                await uiService.showSuccessNotification(
+                    `Docker files generated successfully with AI in ${result.generationTime}ms!`,
+                    [
+                        { title: 'Open Files', callback: () => {
+                            vscode.commands.executeCommand('workbench.view.explorer');
+                        }},
+                        { title: 'View Dashboard', callback: () => {
+                            vscode.commands.executeCommand('autoDocker.showDashboard');
+                        }}
+                    ]
+                );
             } catch (innerError) {
                 const errorMsg = innerError instanceof Error ? innerError.message : 'Unknown error';
                 outputChannel.appendLine(`❌ Error: ${errorMsg}`);
@@ -253,7 +297,6 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
         });
 
     } catch (error) {
-        // CRITICAL FIX #35: Comprehensive error logging and user feedback
         const errorMessage = error instanceof Error ? error.message :
             typeof error === 'string' ? error :
                 'Unknown error occurred';
@@ -262,8 +305,7 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
             outputChannel.appendLine(`Stack: ${error.stack}`);
         }
         
-        // Update UI with error
-        uiService.showError('Generation failed');
+        uiService.showError('AI generation failed');
         await uiService.showErrorNotification(`Failed to generate Docker files: ${errorMessage}`, [
             { title: 'View Logs', callback: () => outputChannel.show() },
             { title: 'Try Again', callback: () => vscode.commands.executeCommand('autoDocker.analyzeProject') }
@@ -766,7 +808,7 @@ async function analyzeDependencies() {
  */
 async function optimizePromptAnalysis() {
     const { PromptEngineeringService } = await import('./promptEngineeringService');
-    const { EnhancedProjectAnalyzer } = await import('./enhancedProjectAnalyzer');
+    const { ComprehensiveAnalyzer } = await import('./comprehensiveAnalyzer');
     
     try {
         // Get workspace folder
@@ -787,9 +829,9 @@ async function optimizePromptAnalysis() {
         }, async (progress) => {
             progress.report({ increment: 10, message: 'Analyzing project...' });
             
-            // Analyze project
-            const analyzer = new EnhancedProjectAnalyzer(projectPath);
-            const projectStructure = await analyzer.analyze();
+            // Analyze project with ComprehensiveAnalyzer
+            const analyzer = new ComprehensiveAnalyzer(projectPath);
+            const analysis = await analyzer.analyze();
             
             progress.report({ increment: 30, message: 'Generating optimized prompts...' });
             
@@ -1351,6 +1393,172 @@ function getFullDashboardHtml(): string {
     </script>
 </body>
 </html>`;
+}
+
+/**
+ * AI-powered Docker generation (separate command for explicit AI usage)
+ */
+async function aiGenerateDockerFiles(): Promise<void> {
+    try {
+        outputChannel.clear();
+        outputChannel.show(true);
+        outputChannel.appendLine('🤖 Starting AI-powered Docker generation...');
+
+        const workspaceRoot = await MultiWorkspaceManager.getActiveWorkspaceFolder();
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage('No workspace folder open');
+            return;
+        }
+
+        // Check API configuration
+        const apiConfigValid = await validateApiConfiguration();
+        if (!apiConfigValid) {
+            return;
+        }
+
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "AI Docker Generation Pipeline",
+            cancellable: false
+        }, async (progress) => {
+            progress.report({ increment: 0, message: "Step 1: AI Tech Stack Detection..." });
+            
+            const aiService = new AIDockerGenerationService(workspaceRoot);
+            const result = await aiService.generate();
+
+            if (!result.success) {
+                throw new Error('AI generation failed');
+            }
+
+            progress.report({ increment: 50, message: "Step 2: Guardrails Validation..." });
+            
+            outputChannel.appendLine(`\n✅ Generation Complete:`);
+            outputChannel.appendLine(`  - Tech Stack: ${result.techStack.primaryLanguage} (${result.techStack.primaryRuntime})`);
+            outputChannel.appendLine(`  - Confidence: ${(result.techStack.confidence * 100).toFixed(0)}%`);
+            outputChannel.appendLine(`  - Time: ${result.generationTime}ms`);
+            outputChannel.appendLine(`  - Validated: ${result.dockerFiles ? 'Yes' : 'No'}`);
+
+            progress.report({ increment: 80, message: "Step 3: Writing files..." });
+
+            const fileManager = new FileManager(workspaceRoot);
+            await fileManager.writeDockerFiles(result.dockerFiles, {
+                projectType: result.techStack.projectType,
+                frontend: result.techStack.frontend?.framework,
+                backend: result.techStack.backend?.framework,
+                databases: result.techStack.databases.map(db => db.type)
+            });
+
+            progress.report({ increment: 100, message: "Complete!" });
+
+            vscode.window.showInformationMessage(
+                `✅ AI-generated Docker files (${result.generationTime}ms, ${(result.techStack.confidence * 100).toFixed(0)}% confidence)`,
+                'View Files',
+                'Dashboard'
+            ).then(selection => {
+                if (selection === 'View Files') {
+                    vscode.commands.executeCommand('workbench.view.explorer');
+                } else if (selection === 'Dashboard') {
+                    vscode.commands.executeCommand('autoDocker.showDashboard');
+                }
+            });
+        });
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        outputChannel.appendLine(`❌ AI Generation Error: ${errorMessage}`);
+        vscode.window.showErrorMessage(`AI generation failed: ${errorMessage}`);
+    }
+}
+
+/**
+ * Detect tech stack with AI (diagnostic command)
+ */
+async function detectTechStackWithAI(): Promise<void> {
+    try {
+        outputChannel.clear();
+        outputChannel.show(true);
+        outputChannel.appendLine('🔍 Detecting tech stack with AI...');
+
+        const workspaceRoot = await MultiWorkspaceManager.getActiveWorkspaceFolder();
+        if (!workspaceRoot) {
+            vscode.window.showErrorMessage('No workspace folder open');
+            return;
+        }
+
+        // Check API configuration
+        const apiConfigValid = await validateApiConfiguration();
+        if (!apiConfigValid) {
+            return;
+        }
+
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: "Analyzing codebase with AI...",
+            cancellable: false
+        }, async (progress) => {
+            const detector = new AITechStackDetector(workspaceRoot);
+            
+            progress.report({ increment: 30, message: "Gathering context..." });
+            const techStack = await detector.detectTechStack();
+
+            progress.report({ increment: 100, message: "Analysis complete!" });
+
+            // Display results
+            outputChannel.appendLine('\n📊 Tech Stack Detection Results:\n');
+            outputChannel.appendLine(`Primary Language: ${techStack.primaryLanguage}`);
+            outputChannel.appendLine(`Primary Runtime: ${techStack.primaryRuntime}`);
+            outputChannel.appendLine(`Frameworks: ${techStack.frameworks.join(', ') || 'None'}`);
+            outputChannel.appendLine(`Build Tools: ${techStack.buildTools.join(', ') || 'None'}`);
+            outputChannel.appendLine(`Package Managers: ${techStack.packageManagers.join(', ') || 'None'}`);
+            outputChannel.appendLine(`Project Type: ${techStack.projectType}`);
+            outputChannel.appendLine(`\nConfidence: ${(techStack.confidence * 100).toFixed(0)}%`);
+            outputChannel.appendLine(`\nReasoning: ${techStack.reasoning}`);
+            
+            if (techStack.frontend) {
+                outputChannel.appendLine(`\nFrontend:`);
+                outputChannel.appendLine(`  - Framework: ${techStack.frontend.framework}`);
+                outputChannel.appendLine(`  - Build Output: ${techStack.frontend.buildOutputDir}`);
+                outputChannel.appendLine(`  - Build Command: ${techStack.frontend.buildCommand}`);
+            }
+            
+            if (techStack.backend) {
+                outputChannel.appendLine(`\nBackend:`);
+                outputChannel.appendLine(`  - Framework: ${techStack.backend.framework}`);
+                outputChannel.appendLine(`  - Language: ${techStack.backend.language}`);
+                outputChannel.appendLine(`  - Entry Point: ${techStack.backend.entryPoint}`);
+                outputChannel.appendLine(`  - Port: ${techStack.backend.port}`);
+            }
+            
+            if (techStack.databases.length > 0) {
+                outputChannel.appendLine(`\nDatabases:`);
+                techStack.databases.forEach(db => {
+                    outputChannel.appendLine(`  - ${db.type}${db.version ? ` v${db.version}` : ''} (Port: ${db.port})`);
+                });
+            }
+            
+            outputChannel.appendLine(`\nRecommended Base Image: ${techStack.baseImage}`);
+            outputChannel.appendLine(`Exposed Ports: ${techStack.exposedPorts.join(', ')}`);
+
+            const message = `Tech Stack Detected: ${techStack.primaryLanguage} with ${techStack.frameworks[0] || 'no framework'} (${(techStack.confidence * 100).toFixed(0)}% confidence)`;
+            
+            vscode.window.showInformationMessage(
+                message,
+                'Generate Docker Files',
+                'View Details'
+            ).then(selection => {
+                if (selection === 'Generate Docker Files') {
+                    vscode.commands.executeCommand('autoDocker.aiGenerate');
+                } else if (selection === 'View Details') {
+                    outputChannel.show();
+                }
+            });
+        });
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        outputChannel.appendLine(`❌ Detection Error: ${errorMessage}`);
+        vscode.window.showErrorMessage(`Tech stack detection failed: ${errorMessage}`);
+    }
 }
 
 export function deactivate() {
