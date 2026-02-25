@@ -371,10 +371,13 @@
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "test": "node ./out/test/runTest.js",
-    "test:integration": "node test-automation/runTests.js",
+    "compile-integration-tests": "tsc -p tsconfig.integration.json",
+    "test:integration": "npm run compile-integration-tests && node ./out/test/integration/run-integration-tests.js",
+    "test:integration:build": "RUN_DOCKER_BUILD=true npm run test:integration",
     "test:validation": "node test-automation/validateDockerFiles.js",
     "test:build": "node test-automation/testDockerBuild.js",
     "test:all": "npm run test && npm run test:integration",
+    "test:vsix": "npm run compile-integration-tests && npm run test:integration",
     "clean": "rimraf dist out .vscode-test",
     "rebuild": "npm run clean && npm install && npm run compile",
     "package:vsix": "vsce package"
@@ -398,6 +401,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
     "@google/generative-ai": "^0.21.0",
     "@langchain/anthropic": "^1.3.5",
     "@langchain/core": "^1.1.10",
@@ -407,7 +411,7 @@
     "js-yaml": "^4.1.1",
     "langchain": "^1.2.5",
     "openai": "^4.67.3",
-    "zod": "^3.25.76"
+    "zod": "^3.23.8"
   },
   "optionalDependencies": {
     "@guardrails-ai/sdk": "^0.4.0"

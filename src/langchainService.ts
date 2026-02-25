@@ -12,8 +12,7 @@ import { StructuredOutputParser } from '@langchain/core/output_parsers';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { z } from 'zod';
 import { ComprehensiveAnalysis } from './comprehensiveAnalyzer';
-import { ProjectStructure } from './projectAnalyzer';
-import { DockerFiles } from './llmService';
+import { DockerFiles, ProjectStructure } from './types';
 import { GuardrailsService } from './guardrailsService';
 
 /**

@@ -17,7 +17,7 @@ import {
     GuardrailsConfig
 } from './guardrailsTypes';
 import { ValidatorRegistry } from './dockerValidators';
-import { DockerFiles } from './llmService';
+import { DockerFiles } from './types';
 
 /**
  * Zod Schema Definitions for Docker Files
