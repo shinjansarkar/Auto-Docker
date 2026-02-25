@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { LLMService } from './llmService';
 import { FileManager } from './fileManager';
 import { DockerTestRunner } from './testRunner';
 import { TestReporter } from './testReporter';
@@ -264,11 +263,15 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
                 progress.report({ increment: 90, message: "Writing files..." });
                 outputChannel.appendLine('📝 Writing Docker files to workspace...');
 
-                const projectStructure = {
+                const projectStructure: any = {
                     projectType: result.techStack.projectType,
                     frontend: result.techStack.frontend?.framework,
                     backend: result.techStack.backend?.framework,
-                    databases: result.techStack.databases.map(db => db.type)
+                    databases: result.techStack.databases.map(db => db.type),
+                    files: [],
+                    dependencies: {},
+                    hasMultiStage: true,
+                    description: `AI-generated Docker configuration for ${result.techStack.projectType}`
                 };
 
                 await fileManager.writeDockerFiles(result.dockerFiles, projectStructure);
@@ -840,28 +843,31 @@ async function optimizePromptAnalysis() {
             
             // Build context
             let projectSize: 'small' | 'medium' | 'large' | 'enterprise' = 'medium';
-            const fileCount = projectStructure.files.length;
-            if (fileCount < 20) projectSize = 'small';
-            else if (fileCount < 100) projectSize = 'medium';
-            else if (fileCount < 500) projectSize = 'large';
+            const fileCount = analysis.frontends.length + analysis.backends.length;
+            if (fileCount < 5) projectSize = 'small';
+            else if (fileCount < 20) projectSize = 'medium';
+            else if (fileCount < 50) projectSize = 'large';
             else projectSize = 'enterprise';
             
             let complexity: 'simple' | 'moderate' | 'complex' = 'moderate';
-            if (projectStructure.backend && projectStructure.frontend && projectStructure.database) {
+            const hasBackend = analysis.backends.length > 0;
+            const hasFrontend = analysis.frontends.length > 0;
+            const hasDatabase = analysis.databases.length > 0;
+            
+            if (hasBackend && hasFrontend && hasDatabase) {
                 complexity = 'complex';
-            } else if (!projectStructure.backend || !projectStructure.frontend) {
+            } else if (!hasBackend || !hasFrontend) {
                 complexity = 'simple';
             }
             
             const context = {
-                projectType: projectStructure.projectType,
-                framework: projectStructure.frontend?.framework || projectStructure.backend?.framework,
-                language: projectStructure.backend === 'flask' || projectStructure.backend === 'django' ? 'python' : 'javascript',
+                projectType: analysis.isMonorepo ? 'monorepo' : 'fullstack',
+                framework: analysis.frontends[0]?.framework || analysis.backends[0]?.framework || 'unknown',
+                language: analysis.backends[0]?.language || 'javascript',
                 projectSize,
                 complexity,
                 requirements: [
-                    projectStructure.hasEnvFile ? 'Environment variables' : null,
-                    projectStructure.database ? `Database: ${projectStructure.database}` : null
+                    hasDatabase ? `Database: ${analysis.databases[0]?.type}` : null
                 ].filter(Boolean) as string[]
             };
             
@@ -1445,8 +1451,12 @@ async function aiGenerateDockerFiles(): Promise<void> {
                 projectType: result.techStack.projectType,
                 frontend: result.techStack.frontend?.framework,
                 backend: result.techStack.backend?.framework,
-                databases: result.techStack.databases.map(db => db.type)
-            });
+                databases: result.techStack.databases.map(db => db.type),
+                files: [],
+                dependencies: {},
+                hasMultiStage: true,
+                description: `AI-generated Docker configuration for ${result.techStack.projectType}`
+            } as any);
 
             progress.report({ increment: 100, message: "Complete!" });
 

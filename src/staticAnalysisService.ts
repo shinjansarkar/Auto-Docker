@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import * as yaml from 'js-yaml';
-import { DockerFiles } from './llmService';
+import { DockerFiles } from './types';
 import { SchemaValidator } from './schemaValidator';
 
 /**
