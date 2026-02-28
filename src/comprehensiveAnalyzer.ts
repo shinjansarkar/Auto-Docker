@@ -348,11 +348,12 @@ export class ComprehensiveAnalyzer {
         const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
         const deps = { ...packageJson.dependencies, ...packageJson.devDependencies };
 
-        // Detect frontend frameworks
+        // Detect frontend frameworks (priority order matters)
         let framework: string | null = null;
         let variant: string | undefined;
         let outputFolder = 'dist';
 
+        // Next.js (highest priority for React projects)
         if (deps['next']) {
             framework = 'nextjs';
             outputFolder = '.next';
@@ -362,7 +363,43 @@ export class ComprehensiveAnalyzer {
             } else {
                 variant = 'ssr';
             }
-        } else if (deps['react']) {
+        }
+        // Remix
+        else if (deps['@remix-run/react']) {
+            framework = 'remix';
+            variant = 'ssr';
+            outputFolder = 'build';
+        }
+        // Astro
+        else if (deps['astro']) {
+            framework = 'astro';
+            outputFolder = 'dist';
+        }
+        // Nuxt (for Vue)
+        else if (deps['nuxt']) {
+            framework = 'nuxt';
+            variant = 'ssr';
+            outputFolder = '.output';
+        }
+        // SvelteKit
+        else if (deps['@sveltejs/kit']) {
+            framework = 'sveltekit';
+            variant = 'ssr';
+            outputFolder = 'build';
+        }
+        // Qwik
+        else if (deps['@builder.io/qwik']) {
+            framework = 'qwik';
+            outputFolder = 'dist';
+        }
+        // SolidStart (for SolidJS)
+        else if (deps['solid-start']) {
+            framework = 'solidstart';
+            variant = 'ssr';
+            outputFolder = 'dist';
+        }
+        // React (general)
+        else if (deps['react']) {
             framework = 'react';
             if (deps['vite']) {
                 variant = 'vite';
@@ -370,23 +407,74 @@ export class ComprehensiveAnalyzer {
             } else if (deps['react-scripts']) {
                 variant = 'cra';
                 outputFolder = 'build';
+            } else if (deps['webpack']) {
+                variant = 'webpack';
+                outputFolder = 'build';
+            } else if (deps['parcel']) {
+                variant = 'parcel';
+                outputFolder = 'dist';
             } else {
                 variant = 'custom';
             }
-        } else if (deps['vue']) {
+        }
+        // Vue
+        else if (deps['vue']) {
             framework = 'vue';
+            if (deps['vite']) {
+                variant = 'vite';
+            }
             outputFolder = 'dist';
-        } else if (deps['@angular/core']) {
+        }
+        // Angular
+        else if (deps['@angular/core']) {
             framework = 'angular';
             outputFolder = 'dist/' + (packageJson.name || 'app');
-        } else if (deps['svelte']) {
+        }
+        // Svelte (standalone)
+        else if (deps['svelte']) {
             framework = 'svelte';
-            if (deps['@sveltejs/kit']) {
-                variant = 'sveltekit';
-                outputFolder = 'build';
+            if (deps['vite']) {
+                variant = 'vite';
+                outputFolder = 'dist';
             } else {
                 outputFolder = 'public';
             }
+        }
+        // SolidJS (standalone)
+        else if (deps['solid-js']) {
+            framework = 'solid';
+            if (deps['vite']) {
+                variant = 'vite';
+            }
+            outputFolder = 'dist';
+        }
+        // Preact
+        else if (deps['preact']) {
+            framework = 'preact';
+            if (deps['vite']) {
+                variant = 'vite';
+            }
+            outputFolder = 'dist';
+        }
+        // Lit
+        else if (deps['lit']) {
+            framework = 'lit';
+            outputFolder = 'dist';
+        }
+        // Alpine.js (lightweight)
+        else if (deps['alpinejs']) {
+            framework = 'alpine';
+            outputFolder = 'dist';
+        }
+        // Stencil
+        else if (deps['@stencil/core']) {
+            framework = 'stencil';
+            outputFolder = 'www';
+        }
+        // Fresh (Deno)
+        else if (deps['fresh']) {
+            framework = 'fresh';
+            outputFolder = '_fresh';
         }
 
         if (!framework) {
@@ -428,7 +516,7 @@ export class ComprehensiveAnalyzer {
      * Detect backend framework in a directory
      */
     private async detectBackendInDir(dirPath: string, relativePath: string): Promise<ComprehensiveAnalysis['backends'][0] | null> {
-        // Node.js backend
+        // Node.js/Bun backend
         const packageJsonPath = path.join(dirPath, 'package.json');
         if (fs.existsSync(packageJsonPath)) {
             const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
@@ -436,19 +524,35 @@ export class ComprehensiveAnalyzer {
 
             let framework: string | null = null;
 
-            if (deps['express']) framework = 'express';
-            else if (deps['@nestjs/core']) framework = 'nestjs';
-            else if (deps['koa']) framework = 'koa';
+            // Detect Node.js backend frameworks (priority order)
+            if (deps['@nestjs/core']) framework = 'nestjs';
+            else if (deps['express']) framework = 'express';
             else if (deps['fastify']) framework = 'fastify';
-            else if (deps['hapi']) framework = 'hapi';
+            else if (deps['koa']) framework = 'koa';
+            else if (deps['hapi'] || deps['@hapi/hapi']) framework = 'hapi';
+            else if (deps['@trpc/server']) framework = 'trpc';
+            else if (deps['apollo-server'] || deps['apollo-server-express']) framework = 'apollo-graphql';
+            else if (deps['graphql-yoga']) framework = 'graphql-yoga';
+            else if (deps['hono']) framework = 'hono';
+            else if (deps['elysia']) framework = 'elysia';
+            else if (deps['@feathersjs/feathers']) framework = 'feathers';
+            else if (deps['restify']) framework = 'restify';
+            else if (deps['sails']) framework = 'sails';
+            else if (deps['loopback']) framework = 'loopback';
+            else if (deps['adonis']) framework = 'adonis';
+            // Check for Bun-specific projects
+            else if (deps['bun']) framework = 'bun';
 
             if (framework) {
+                const isBun = packageJson.runtime === 'bun' || deps['bun'];
                 return {
                     path: relativePath || '.',
                     framework,
                     language: 'node',
-                    version: deps[framework],
-                    packageManager: fs.existsSync(path.join(dirPath, 'yarn.lock')) ? 'yarn' : 'npm',
+                    version: deps[framework] || deps['bun'],
+                    packageManager: isBun ? 'bun' : 
+                                   fs.existsSync(path.join(dirPath, 'yarn.lock')) ? 'yarn' :
+                                   fs.existsSync(path.join(dirPath, 'pnpm-lock.yaml')) ? 'pnpm' : 'npm',
                     dependencies: packageJson.dependencies || {},
                     mainFile: packageJson.main || 'index.js',
                     port: this.extractPort(packageJson),
@@ -471,6 +575,22 @@ export class ComprehensiveAnalyzer {
                 if (requirements.includes('fastapi')) framework = 'fastapi';
                 else if (requirements.includes('django')) framework = 'django';
                 else if (requirements.includes('flask')) framework = 'flask';
+                else if (requirements.includes('tornado')) framework = 'tornado';
+                else if (requirements.includes('aiohttp')) framework = 'aiohttp';
+                else if (requirements.includes('sanic')) framework = 'sanic';
+                else if (requirements.includes('starlette')) framework = 'starlette';
+                else if (requirements.includes('bottle')) framework = 'bottle';
+                else if (requirements.includes('falcon')) framework = 'falcon';
+                else if (requirements.includes('pyramid')) framework = 'pyramid';
+            }
+
+            // Check pyproject.toml for Poetry projects
+            const pyprojectPath = path.join(dirPath, 'pyproject.toml');
+            if (fs.existsSync(pyprojectPath)) {
+                const pyproject = fs.readFileSync(pyprojectPath, 'utf8');
+                if (pyproject.includes('fastapi')) framework = 'fastapi';
+                else if (pyproject.includes('django')) framework = 'django';
+                else if (pyproject.includes('flask')) framework = 'flask';
             }
 
             return {
@@ -485,10 +605,30 @@ export class ComprehensiveAnalyzer {
 
         // Java backend
         if (fs.existsSync(path.join(dirPath, 'pom.xml')) ||
-            fs.existsSync(path.join(dirPath, 'build.gradle'))) {
+            fs.existsSync(path.join(dirPath, 'build.gradle')) ||
+            fs.existsSync(path.join(dirPath, 'build.gradle.kts'))) {
+            
+            let framework = 'java';
+            const pomPath = path.join(dirPath, 'pom.xml');
+            const gradlePath = path.join(dirPath, 'build.gradle');
+            
+            if (fs.existsSync(pomPath)) {
+                const pom = fs.readFileSync(pomPath, 'utf8');
+                if (pom.includes('spring-boot')) framework = 'spring-boot';
+                else if (pom.includes('quarkus')) framework = 'quarkus';
+                else if (pom.includes('micronaut')) framework = 'micronaut';
+                else if (pom.includes('helidon')) framework = 'helidon';
+            } else if (fs.existsSync(gradlePath)) {
+                const gradle = fs.readFileSync(gradlePath, 'utf8');
+                if (gradle.includes('spring-boot')) framework = 'spring-boot';
+                else if (gradle.includes('quarkus')) framework = 'quarkus';
+                else if (gradle.includes('micronaut')) framework = 'micronaut';
+                else if (gradle.includes('ktor')) framework = 'ktor';
+            }
+            
             return {
                 path: relativePath || '.',
-                framework: 'spring-boot',
+                framework,
                 language: 'java',
                 dependencies: {},
                 hasTests: fs.existsSync(path.join(dirPath, 'src/test')),
@@ -502,6 +642,11 @@ export class ComprehensiveAnalyzer {
             let framework = 'go';
             if (goMod.includes('gin-gonic/gin')) framework = 'gin';
             else if (goMod.includes('gofiber/fiber')) framework = 'fiber';
+            else if (goMod.includes('labstack/echo')) framework = 'echo';
+            else if (goMod.includes('gorilla/mux')) framework = 'gorilla';
+            else if (goMod.includes('go-chi/chi')) framework = 'chi';
+            else if (goMod.includes('beego')) framework = 'beego';
+            else if (goMod.includes('revel')) framework = 'revel';
 
             return {
                 path: relativePath || '.',
@@ -509,6 +654,103 @@ export class ComprehensiveAnalyzer {
                 language: 'go',
                 dependencies: {},
                 hasTests: true,
+                envFiles: this.getEnvFiles(dirPath)
+            };
+        }
+
+        // Rust backend
+        if (fs.existsSync(path.join(dirPath, 'Cargo.toml'))) {
+            const cargoToml = fs.readFileSync(path.join(dirPath, 'Cargo.toml'), 'utf8');
+            let framework = 'rust';
+            if (cargoToml.includes('actix-web')) framework = 'actix';
+            else if (cargoToml.includes('rocket')) framework = 'rocket';
+            else if (cargoToml.includes('axum')) framework = 'axum';
+            else if (cargoToml.includes('warp')) framework = 'warp';
+            else if (cargoToml.includes('tokio')) framework = 'tokio';
+
+            return {
+                path: relativePath || '.',
+                framework,
+                language: 'rust',
+                dependencies: {},
+                hasTests: true,
+                envFiles: this.getEnvFiles(dirPath)
+            };
+        }
+
+        // PHP backend
+        if (fs.existsSync(path.join(dirPath, 'composer.json'))) {
+            const composerJson = JSON.parse(fs.readFileSync(path.join(dirPath, 'composer.json'), 'utf8'));
+            let framework = 'php';
+            
+            const require = composerJson.require || {};
+            if (require['laravel/framework']) framework = 'laravel';
+            else if (require['symfony/symfony']) framework = 'symfony';
+            else if (require['cakephp/cakephp']) framework = 'cakephp';
+            else if (require['codeigniter/framework']) framework = 'codeigniter';
+            else if (require['slim/slim']) framework = 'slim';
+            else if (require['yiisoft/yii2']) framework = 'yii';
+
+            return {
+                path: relativePath || '.',
+                framework,
+                language: 'php',
+                dependencies: require,
+                hasTests: fs.existsSync(path.join(dirPath, 'tests')),
+                envFiles: this.getEnvFiles(dirPath)
+            };
+        }
+
+        // Ruby backend
+        if (fs.existsSync(path.join(dirPath, 'Gemfile'))) {
+            const gemfile = fs.readFileSync(path.join(dirPath, 'Gemfile'), 'utf8');
+            let framework = 'ruby';
+            if (gemfile.includes('rails')) framework = 'rails';
+            else if (gemfile.includes('sinatra')) framework = 'sinatra';
+            else if (gemfile.includes('padrino')) framework = 'padrino';
+            else if (gemfile.includes('hanami')) framework = 'hanami';
+
+            return {
+                path: relativePath || '.',
+                framework,
+                language: 'ruby',
+                dependencies: {},
+                hasTests: fs.existsSync(path.join(dirPath, 'spec')) || fs.existsSync(path.join(dirPath, 'test')),
+                envFiles: this.getEnvFiles(dirPath)
+            };
+        }
+
+        // Elixir backend
+        if (fs.existsSync(path.join(dirPath, 'mix.exs'))) {
+            const mixExs = fs.readFileSync(path.join(dirPath, 'mix.exs'), 'utf8');
+            let framework = 'elixir';
+            if (mixExs.includes('phoenix')) framework = 'phoenix';
+            else if (mixExs.includes('plug')) framework = 'plug';
+
+            return {
+                path: relativePath || '.',
+                framework,
+                language: 'elixir',
+                dependencies: {},
+                hasTests: fs.existsSync(path.join(dirPath, 'test')),
+                envFiles: this.getEnvFiles(dirPath)
+            };
+        }
+
+        // .NET backend
+        const csprojFiles = fs.readdirSync(dirPath).filter(f => f.endsWith('.csproj'));
+        if (csprojFiles.length > 0) {
+            const csproj = fs.readFileSync(path.join(dirPath, csprojFiles[0]), 'utf8');
+            let framework = 'dotnet';
+            if (csproj.includes('Microsoft.AspNetCore')) framework = 'aspnetcore';
+            else if (csproj.includes('Microsoft.NET.Sdk.Web')) framework = 'aspnetcore';
+
+            return {
+                path: relativePath || '.',
+                framework,
+                language: 'dotnet',
+                dependencies: {},
+                hasTests: fs.existsSync(path.join(dirPath, 'Tests')),
                 envFiles: this.getEnvFiles(dirPath)
             };
         }
@@ -526,17 +768,68 @@ export class ComprehensiveAnalyzer {
         for (const envFile of envFiles) {
             const content = fs.readFileSync(envFile, 'utf8');
 
+            // SQL Databases
             if (content.match(/POSTGRES|PG_|DATABASE_URL.*postgres/i)) {
                 databases.push({ type: 'postgres' });
             }
             if (content.match(/MYSQL|MARIADB/i)) {
                 databases.push({ type: 'mysql' });
             }
-            if (content.match(/MONGODB|MONGO_URL/i)) {
+            if (content.match(/MSSQL|SQLSERVER|SQL_SERVER/i)) {
+                databases.push({ type: 'mssql' });
+            }
+            if (content.match(/ORACLE|ORA_|ORACLE_HOME/i)) {
+                databases.push({ type: 'oracle' });
+            }
+            if (content.match(/SQLITE|DATABASE_FILE/i)) {
+                databases.push({ type: 'sqlite' });
+            }
+            
+            // NoSQL Databases
+            if (content.match(/MONGODB|MONGO_URL|MONGO_URI/i)) {
                 databases.push({ type: 'mongodb' });
             }
-            if (content.match(/REDIS/i)) {
+            if (content.match(/CASSANDRA/i)) {
+                databases.push({ type: 'cassandra' });
+            }
+            if (content.match(/COUCHDB/i)) {
+                databases.push({ type: 'couchdb' });
+            }
+            if (content.match(/DYNAMODB|AWS_DYNAMODB/i)) {
+                databases.push({ type: 'dynamodb' });
+            }
+            if (content.match(/NEO4J/i)) {
+                databases.push({ type: 'neo4j' });
+            }
+            
+            // Cache/Key-Value Stores
+            if (content.match(/REDIS|REDIS_URL/i)) {
                 databases.push({ type: 'redis' });
+            }
+            if (content.match(/MEMCACHED/i)) {
+                databases.push({ type: 'memcached' });
+            }
+            if (content.match(/VALKEY/i)) {
+                databases.push({ type: 'valkey' });
+            }
+            
+            // Search Engines
+            if (content.match(/ELASTICSEARCH|ELASTIC_URL/i)) {
+                databases.push({ type: 'elasticsearch' });
+            }
+            if (content.match(/MEILISEARCH/i)) {
+                databases.push({ type: 'meilisearch' });
+            }
+            
+            // Time Series & Analytics
+            if (content.match(/INFLUXDB/i)) {
+                databases.push({ type: 'influxdb' });
+            }
+            if (content.match(/CLICKHOUSE/i)) {
+                databases.push({ type: 'clickhouse' });
+            }
+            if (content.match(/TIMESCALEDB/i)) {
+                databases.push({ type: 'timescaledb' });
             }
         }
 
@@ -546,10 +839,32 @@ export class ComprehensiveAnalyzer {
             const composePath = path.join(this.basePath, file);
             if (fs.existsSync(composePath)) {
                 const content = fs.readFileSync(composePath, 'utf8');
+                
+                // SQL Databases
                 if (content.includes('image: postgres')) databases.push({ type: 'postgres' });
                 if (content.includes('image: mysql') || content.includes('image: mariadb')) databases.push({ type: 'mysql' });
+                if (content.includes('image: mcr.microsoft.com/mssql')) databases.push({ type: 'mssql' });
+                
+                // NoSQL Databases
                 if (content.includes('image: mongo')) databases.push({ type: 'mongodb' });
+                if (content.includes('image: cassandra')) databases.push({ type: 'cassandra' });
+                if (content.includes('image: couchdb')) databases.push({ type: 'couchdb' });
+                if (content.includes('image: neo4j')) databases.push({ type: 'neo4j' });
+                
+                // Cache Stores
                 if (content.includes('image: redis')) databases.push({ type: 'redis' });
+                if (content.includes('image: memcached')) databases.push({ type: 'memcached' });
+                if (content.includes('image: valkey')) databases.push({ type: 'valkey' });
+                
+                // Search Engines
+                if (content.includes('image: elasticsearch') || content.includes('image: docker.elastic.co')) {
+                    databases.push({ type: 'elasticsearch' });
+                }
+                if (content.includes('image: getmeili/meilisearch')) databases.push({ type: 'meilisearch' });
+                
+                // Time Series
+                if (content.includes('image: influxdb')) databases.push({ type: 'influxdb' });
+                if (content.includes('image: clickhouse')) databases.push({ type: 'clickhouse' });
             }
         }
 
