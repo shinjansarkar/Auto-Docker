@@ -1,6 +1,6 @@
 /**
  * AI-Based Tech Stack Detector
- * Uses AI (Claude/Gemini) to intelligently detect ANY tech stack
+ * Uses Gemini AI to intelligently detect ANY tech stack
  * Provides accurate detection without hardcoded rules
  * Works with both known and unknown/emerging technologies
  */
@@ -9,7 +9,6 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import Anthropic from '@anthropic-ai/sdk';
 
 export interface AIDetectedTechStack {
     // Primary information
@@ -73,43 +72,28 @@ export interface AIDetectedTechStack {
 }
 
 /**
- * AI Tech Stack Detector using Claude or Gemini
+ * AI Tech Stack Detector using Gemini
  */
 export class AITechStackDetector {
-    private anthropicClient?: Anthropic;
     private geminiClient?: GoogleGenerativeAI;
     private workspaceRoot: string;
-    private useProvider: 'claude' | 'gemini';
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
-        this.useProvider = 'gemini'; // Default to Gemini
         this.initializeClients();
     }
 
     /**
-     * Initialize AI clients based on available API keys
+     * Initialize AI clients (Gemini only)
      */
     private initializeClients() {
         const config = vscode.workspace.getConfiguration('autoDocker');
-        
-        const anthropicKey = config.get<string>('anthropicApiKey');
         const geminiKey = config.get<string>('geminiApiKey');
-        
-        if (anthropicKey) {
-            this.anthropicClient = new Anthropic({ apiKey: anthropicKey });
-            this.useProvider = 'claude';
-        }
-        
         if (geminiKey) {
             this.geminiClient = new GoogleGenerativeAI(geminiKey);
-            if (!anthropicKey) {
-                this.useProvider = 'gemini';
-            }
         }
-        
-        if (!anthropicKey && !geminiKey) {
-            throw new Error('No AI API key configured. Please configure Anthropic or Gemini API key in settings.');
+        if (!geminiKey) {
+            throw new Error('No Gemini API key configured. Please set your Gemini API key in settings.');
         }
     }
 
@@ -124,15 +108,7 @@ export class AITechStackDetector {
         
         // Step 2: Send to AI for analysis
         const prompt = this.createDetectionPrompt(context);
-        
-        let aiResponse: string;
-        if (this.useProvider === 'claude' && this.anthropicClient) {
-            aiResponse = await this.detectWithClaude(prompt);
-        } else if (this.useProvider === 'gemini' && this.geminiClient) {
-            aiResponse = await this.detectWithGemini(prompt);
-        } else {
-            throw new Error('No AI provider available');
-        }
+        const aiResponse = await this.detectWithGemini(prompt);
         
         // Step 3: Parse AI response
         const detected = this.parseAIResponse(aiResponse);
@@ -821,33 +797,6 @@ RESPOND ONLY WITH THE JSON OBJECT - NO OTHER TEXT.`;
     }
 
     /**
-     * Detect using Claude API
-     */
-    private async detectWithClaude(prompt: string): Promise<string> {
-        if (!this.anthropicClient) {
-            throw new Error('Claude client not initialized');
-        }
-        
-        console.log('[AITechStackDetector] Using Claude for detection...');
-        
-        const response = await this.anthropicClient.messages.create({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 4000,
-            messages: [{
-                role: 'user',
-                content: prompt
-            }]
-        });
-        
-        const content = response.content[0];
-        if (content.type === 'text') {
-            return content.text;
-        }
-        
-        throw new Error('Unexpected response format from Claude');
-    }
-
-    /**
      * Detect using Gemini API
      */
     private async detectWithGemini(prompt: string): Promise<string> {
@@ -856,9 +805,11 @@ RESPOND ONLY WITH THE JSON OBJECT - NO OTHER TEXT.`;
         }
         
         console.log('[AITechStackDetector] Using Gemini for detection...');
+        const config = vscode.workspace.getConfiguration('autoDocker');
+        const modelName = config.get<string>('geminiModel', 'gemini-2.0-flash');
         
         const model = this.geminiClient.getGenerativeModel({ 
-            model: 'gemini-1.5-flash',
+            model: modelName,
             generationConfig: {
                 temperature: 0.1, // Low temperature for factual detection
                 topP: 0.95,

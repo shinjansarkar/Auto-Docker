@@ -5,7 +5,6 @@ import { FileManager } from './fileManager';
 import { DockerTestRunner } from './testRunner';
 import { TestReporter } from './testReporter';
 import { TestProjectGenerator } from './testProjectGenerator';
-import { ComprehensiveAnalyzer } from './comprehensiveAnalyzer';
 import {
     MultiWorkspaceManager,
     BOMHandler,
@@ -18,7 +17,6 @@ import {
 import { UIEnhancementService } from './uiEnhancementService';
 import { AIDockerGenerationService } from './aiDockerGenerationService';
 import { AITechStackDetector } from './aiTechStackDetector';
-import { validateAnalysisBeforeGeneration } from './antiHallucinationPrompts';
 
 let outputChannel: vscode.OutputChannel;
 let uiService: UIEnhancementService;
@@ -174,32 +172,7 @@ async function analyzeProject(skipPreview: boolean = false): Promise<void> {
 
                 const aiService = new AIDockerGenerationService(workspaceRoot);
 
-                // Pre-generation validation: Run comprehensive analysis first
-                progress.report({ increment: 20, message: "Analyzing project structure..." });
-                const analyzer = new ComprehensiveAnalyzer(workspaceRoot);
-                const analysis = await analyzer.analyze();
-                
-                // Validate analysis before generation
-                const validation = validateAnalysisBeforeGeneration(analysis);
-                if (!validation.valid) {
-                    outputChannel.appendLine('\n⚠️  Pre-generation validation warnings:');
-                    validation.errors.forEach(err => outputChannel.appendLine(`  - ${err}`));
-                    
-                    // Show warning but allow to continue
-                    const shouldContinue = await vscode.window.showWarningMessage(
-                        `Analysis validation found issues:\n${validation.errors.join('\n')}\n\nContinue anyway?`,
-                        'Yes, Continue',
-                        'Cancel'
-                    );
-                    
-                    if (shouldContinue !== 'Yes, Continue') {
-                        outputChannel.appendLine('⚠️  Docker generation cancelled by user');
-                        vscode.window.showInformationMessage('Docker generation cancelled');
-                        return;
-                    }
-                }
-
-                // Generate with AI
+                // Generate with AI - Gemini handles all detection and generation
                 progress.report({ increment: 30, message: "Detecting tech stack with AI..." });
                 const result = await aiService.generate();
 
@@ -332,71 +305,37 @@ async function regenerateDockerFiles(): Promise<void> {
 async function configureApiKeys(): Promise<void> {
     const config = vscode.workspace.getConfiguration('autoDocker');
 
-    const provider = await vscode.window.showQuickPick(
-        ['OpenAI (GPT)', 'Google Gemini'],
-        { placeHolder: 'Select your preferred AI provider' }
-    );
+    const apiKey = await vscode.window.showInputBox({
+        placeHolder: 'Enter your Google Gemini API key',
+        password: true,
+        prompt: 'Get your API key from https://aistudio.google.com/app/apikey'
+    });
 
-    if (!provider) {
-        return;
-    }
+    if (apiKey) {
+        await config.update('geminiApiKey', apiKey, vscode.ConfigurationTarget.Global);
 
-    if (provider === 'OpenAI (GPT)') {
-        const apiKey = await vscode.window.showInputBox({
-            placeHolder: 'Enter your OpenAI API key',
-            password: true,
-            prompt: 'Get your API key from https://platform.openai.com/api-keys'
+        const model = await vscode.window.showInputBox({
+            placeHolder: 'e.g. gemini-2.0-flash, gemini-1.5-pro',
+            prompt: 'Enter Gemini model name (leave blank for default: gemini-2.0-flash)',
+            value: config.get<string>('geminiModel', 'gemini-2.0-flash')
         });
 
-        if (apiKey) {
-            await config.update('apiProvider', 'openai', vscode.ConfigurationTarget.Global);
-            await config.update('openaiApiKey', apiKey, vscode.ConfigurationTarget.Global);
-
-            const model = await vscode.window.showQuickPick(
-                ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-                { placeHolder: 'Select model (gpt-4 recommended)' }
-            );
-
-            if (model) {
-                await config.update('model', model, vscode.ConfigurationTarget.Global);
-            }
-
-            vscode.window.showInformationMessage('OpenAI API configuration saved successfully!');
+        if (model && model.trim()) {
+            await config.update('geminiModel', model.trim(), vscode.ConfigurationTarget.Global);
         }
-    } else if (provider === 'Google Gemini') {
-        const apiKey = await vscode.window.showInputBox({
-            placeHolder: 'Enter your Google Gemini API key',
-            password: true,
-            prompt: 'Get your API key from https://makersuite.google.com/app/apikey'
-        });
 
-        if (apiKey) {
-            await config.update('apiProvider', 'gemini', vscode.ConfigurationTarget.Global);
-            await config.update('geminiApiKey', apiKey, vscode.ConfigurationTarget.Global);
-            await config.update('model', 'gemini-1.5-flash', vscode.ConfigurationTarget.Global);
-
-            vscode.window.showInformationMessage('Google Gemini API configuration saved successfully!');
-        }
+        vscode.window.showInformationMessage('Google Gemini API configuration saved successfully!');
     }
 }
 
 async function validateApiConfiguration(): Promise<boolean> {
     const config = vscode.workspace.getConfiguration('autoDocker');
-    const provider = config.get<string>('apiProvider', 'openai');
-
-    let isConfigured = false;
-
-    if (provider === 'openai') {
-        const apiKey = config.get<string>('openaiApiKey');
-        isConfigured = !!apiKey && apiKey.trim().length > 0;
-    } else if (provider === 'gemini') {
-        const apiKey = config.get<string>('geminiApiKey');
-        isConfigured = !!apiKey && apiKey.trim().length > 0;
-    }
+    const apiKey = config.get<string>('geminiApiKey');
+    const isConfigured = !!apiKey && apiKey.trim().length > 0;
 
     if (!isConfigured) {
         const choice = await vscode.window.showErrorMessage(
-            `${provider} API key is not configured. Please set up your API key to use Auto Docker Extension.`,
+            'Gemini API key is not configured. Please set up your API key to use Auto Docker Extension.',
             'Configure Now',
             'Cancel'
         );

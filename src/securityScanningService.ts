@@ -201,7 +201,7 @@ export class SecurityScanningService {
         this.outputChannel = vscode.window.createOutputChannel('Auto Docker - Security Scanner');
         const config = vscode.workspace.getConfiguration('autoDocker');
         this.enabled = config.get('enableSecurityScanning', true);
-        this.strictMode = config.get('securityStrictMode', false);
+        this.strictMode = false; // strict mode disabled
     }
 
     /**
