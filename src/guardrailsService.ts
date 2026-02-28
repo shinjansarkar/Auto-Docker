@@ -68,8 +68,8 @@ export class GuardrailsService {
         
         return {
             enabled: config.get<boolean>('enableGuardrails', true),
-            strictMode: config.get<boolean>('guardrailsStrictMode', false),
-            maxReasks: Math.min(Math.max(config.get<number>('maxReasks', 2), 1), 5),
+            strictMode: false, // strict mode disabled
+            maxReasks: 2,
             validators: [
                 { name: 'no-root-user', enabled: true, severity: 'error', onFail: 'reask' },
                 { name: 'multi-stage-build', enabled: true, severity: 'warning', onFail: 'filter' },

@@ -9,7 +9,6 @@ import { AITechStackDetector, AIDetectedTechStack } from './aiTechStackDetector'
 import { GuardrailsService } from './guardrailsService';
 import { ValidatedDockerFiles } from './guardrailsTypes';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import Anthropic from '@anthropic-ai/sdk';
 
 export interface AIDockerGenerationResult {
     success: boolean;
@@ -28,9 +27,7 @@ export class AIDockerGenerationService {
     private workspaceRoot: string;
     private aiDetector: AITechStackDetector;
     private guardrailsService: GuardrailsService;
-    private anthropicClient?: Anthropic;
     private geminiClient?: GoogleGenerativeAI;
-    private useProvider: 'claude' | 'gemini' = 'gemini';
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
@@ -40,24 +37,13 @@ export class AIDockerGenerationService {
     }
 
     /**
-     * Initialize AI clients
+     * Initialize AI clients (Gemini only)
      */
     private initializeClients() {
         const config = vscode.workspace.getConfiguration('autoDocker');
-        
-        const anthropicKey = config.get<string>('anthropicApiKey');
         const geminiKey = config.get<string>('geminiApiKey');
-        
-        if (anthropicKey) {
-            this.anthropicClient = new Anthropic({ apiKey: anthropicKey });
-            this.useProvider = 'claude';
-        }
-        
         if (geminiKey) {
             this.geminiClient = new GoogleGenerativeAI(geminiKey);
-            if (!anthropicKey) {
-                this.useProvider = 'gemini';
-            }
         }
     }
 
@@ -159,15 +145,10 @@ export class AIDockerGenerationService {
     private async generateDockerFiles(techStack: AIDetectedTechStack): Promise<ValidatedDockerFiles> {
         const prompt = this.createGenerationPrompt(techStack);
         
-        let response: string;
-        if (this.useProvider === 'claude' && this.anthropicClient) {
-            response = await this.generateWithClaude(prompt);
-        } else if (this.useProvider === 'gemini' && this.geminiClient) {
-            response = await this.generateWithGemini(prompt);
-        } else {
-            throw new Error('No AI provider available');
+        if (!this.geminiClient) {
+            throw new Error('Gemini API key is not configured. Please set your key in settings.');
         }
-        
+        const response = await this.generateWithGemini(prompt);
         return this.parseGeneratedFiles(response, techStack);
     }
 
@@ -262,41 +243,16 @@ Generate production-ready, secure, optimized Docker configurations NOW.`;
     }
 
     /**
-     * Generate using Claude
-     */
-    private async generateWithClaude(prompt: string): Promise<string> {
-        if (!this.anthropicClient) {
-            throw new Error('Claude client not initialized');
-        }
-        
-        const response = await this.anthropicClient.messages.create({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 8000,
-            temperature: 0.2, // Low temperature for accurate generation
-            messages: [{
-                role: 'user',
-                content: prompt
-            }]
-        });
-        
-        const content = response.content[0];
-        if (content.type === 'text') {
-            return content.text;
-        }
-        
-        throw new Error('Unexpected response format from Claude');
-    }
-
-    /**
      * Generate using Gemini
      */
     private async generateWithGemini(prompt: string): Promise<string> {
         if (!this.geminiClient) {
             throw new Error('Gemini client not initialized');
         }
-        
-        const model = this.geminiClient.getGenerativeModel({ 
-            model: 'gemini-1.5-flash',
+        const config = vscode.workspace.getConfiguration('autoDocker');
+        const modelName = config.get<string>('geminiModel', 'gemini-2.0-flash');
+        const model = this.geminiClient.getGenerativeModel({
+            model: modelName,
             generationConfig: {
                 temperature: 0.2,
                 topP: 0.95,
@@ -378,15 +334,7 @@ Generate corrected Docker files that fix these issues. Output in JSON format:
   "nginxConf": "..."
 }`;
 
-        let response: string;
-        if (this.useProvider === 'claude' && this.anthropicClient) {
-            response = await this.generateWithClaude(fixPrompt);
-        } else if (this.useProvider === 'gemini' && this.geminiClient) {
-            response = await this.generateWithGemini(fixPrompt);
-        } else {
-            throw new Error('No AI provider available');
-        }
-        
+        const response = await this.generateWithGemini(fixPrompt);
         return this.parseGeneratedFiles(response, techStack);
     }
 

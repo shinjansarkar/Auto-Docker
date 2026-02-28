@@ -75,7 +75,7 @@ export class FileManager {
     async writeDockerFiles(dockerFiles: DockerFiles, projectStructure?: ProjectStructure): Promise<void> {
         const config = vscode.workspace.getConfiguration('autoDocker');
         const customPath = config.get<string>('dockerOutputPath', '');
-        const overwriteFiles = config.get<boolean>('overwriteFiles', false);
+        const overwriteFiles = false; // always ask for confirmation
 
         const outputPath = customPath
             ? path.join(this.workspaceRoot, customPath)

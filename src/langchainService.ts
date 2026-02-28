@@ -5,9 +5,7 @@
  */
 
 import * as vscode from 'vscode';
-import { ChatOpenAI } from '@langchain/openai';
 import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
-import { ChatAnthropic } from '@langchain/anthropic';
 import { StructuredOutputParser } from '@langchain/core/output_parsers';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { z } from 'zod';
@@ -63,9 +61,7 @@ interface DockerComposeGenerationParams {
  * LangChain Service Class
  */
 export class LangChainService {
-    private openaiModel?: ChatOpenAI;
     private geminiModel?: ChatGoogleGenerativeAI;
-    private anthropicModel?: ChatAnthropic;
     private parser: ReturnType<typeof StructuredOutputParser.fromZodSchema>;
     private guardrailsService: GuardrailsService;
     private outputChannel: vscode.OutputChannel;
@@ -83,22 +79,10 @@ export class LangChainService {
     private initializeModels(): void {
         const config = vscode.workspace.getConfiguration('autoDocker');
 
-        // OpenAI
-        const openaiKey = config.get<string>('openaiApiKey');
-        if (openaiKey) {
-            this.openaiModel = new ChatOpenAI({
-                apiKey: openaiKey,
-                modelName: 'gpt-4',
-                temperature: 0,
-                maxTokens: 4096
-            });
-            this.log('✅ OpenAI model initialized');
-        }
-
         // Google Gemini
         const geminiKey = config.get<string>('geminiApiKey');
         if (geminiKey) {
-            const geminiModel = config.get<string>('geminiModel', 'gemini-1.5-pro');
+            const geminiModel = config.get<string>('geminiModel', 'gemini-2.0-flash');
             this.geminiModel = new ChatGoogleGenerativeAI({
                 apiKey: geminiKey,
                 model: geminiModel,
@@ -106,18 +90,6 @@ export class LangChainService {
                 maxOutputTokens: 4096
             });
             this.log(`✅ Gemini model initialized (${geminiModel})`);
-        }
-
-        // Anthropic Claude
-        const anthropicKey = config.get<string>('anthropicApiKey');
-        if (anthropicKey) {
-            this.anthropicModel = new ChatAnthropic({
-                apiKey: anthropicKey,
-                modelName: 'claude-3-sonnet-20240229',
-                temperature: 0,
-                maxTokens: 4096
-            });
-            this.log('✅ Anthropic Claude model initialized');
         }
     }
 
@@ -129,32 +101,13 @@ export class LangChainService {
     }
 
     /**
-     * Get active model based on configuration
+     * Get active model (always Gemini)
      */
-    private getModel(): ChatOpenAI | ChatGoogleGenerativeAI | ChatAnthropic {
-        const config = vscode.workspace.getConfiguration('autoDocker');
-        const preferredProvider = config.get<string>('apiProvider', 'openai');
-        const useLangChain = config.get<boolean>('useLangChain', true);
-
-        if (!useLangChain) {
-            throw new Error('LangChain is disabled in settings');
-        }
-
-        // Try preferred provider first
-        if (preferredProvider === 'openai' && this.openaiModel) {
-            return this.openaiModel;
-        } else if (preferredProvider === 'gemini' && this.geminiModel) {
+    private getModel(): ChatGoogleGenerativeAI {
+        if (this.geminiModel) {
             return this.geminiModel;
-        } else if (preferredProvider === 'anthropic' && this.anthropicModel) {
-            return this.anthropicModel;
         }
-
-        // Fallback to any available model
-        if (this.openaiModel) return this.openaiModel;
-        if (this.geminiModel) return this.geminiModel;
-        if (this.anthropicModel) return this.anthropicModel;
-
-        throw new Error('No LLM provider configured. Please set API keys in settings.');
+        throw new Error('Gemini API key is not configured. Please set your Gemini API key in settings.');
     }
 
     /**
@@ -303,28 +256,8 @@ Generate complete, production-ready configurations now.`,
                 }
             ];
 
-            // Bind functions to model (only OpenAI supports this well)
-            if (model instanceof ChatOpenAI) {
-                // Use withStructuredOutput for better compatibility
-                const modelWithStructuredOutput = model.withStructuredOutput(DockerFilesOutputSchema);
-
-                const prompt = `Generate Docker configuration for this project:\n\n${JSON.stringify(analysis, null, 2)}\n\nGenerate complete Dockerfile, docker-compose.yml, and .dockerignore files.`;
-
-                const response = await modelWithStructuredOutput.invoke(prompt) as DockerFilesOutput;
-
-                this.log(`✅ Structured output generated successfully`);
-                
-                // Convert to DockerFiles format
-                return {
-                    dockerfile: response.dockerfile,
-                    dockerCompose: response.dockerCompose,
-                    dockerIgnore: response.dockerIgnore,
-                    nginxConf: response.nginxConf
-                };
-            }
-
-            // Fallback to structured output if function calling not supported
-            this.log('⚠️ Function calling not supported, falling back to structured output');
+            // Fall back to structured output
+            this.log('⚠️ Falling back to structured output');
             return this.generateWithStructuredOutput(analysis);
 
         } catch (error) {
@@ -508,11 +441,10 @@ coverage
     }
 
     /**
-     * Check if LangChain should be used
+     * LangChain is always used (Gemini only)
      */
     static shouldUseLangChain(): boolean {
-        const config = vscode.workspace.getConfiguration('autoDocker');
-        return config.get<boolean>('useLangChain', true);
+        return true;
     }
 
     /**

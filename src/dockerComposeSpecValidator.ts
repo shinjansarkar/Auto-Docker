@@ -292,8 +292,7 @@ export class DockerComposeSpecValidator {
 
     constructor() {
         this.outputChannel = vscode.window.createOutputChannel('Auto Docker - Compose Spec Validator');
-        const config = vscode.workspace.getConfiguration('autoDocker');
-        this.strictMode = config.get('composeSpecStrictMode', false);
+        this.strictMode = false; // strict mode disabled
     }
 
     /**

@@ -174,65 +174,15 @@
     "configuration": {
       "title": "Auto Docker Extension",
       "properties": {
-        "autoDocker.apiProvider": {
-          "type": "string",
-          "enum": [
-            "openai",
-            "gemini",
-            "anthropic"
-          ],
-          "default": "openai",
-          "description": "Select the LLM API provider for Docker file generation"
-        },
-        "autoDocker.openaiApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "OpenAI API key for GPT integration"
-        },
         "autoDocker.geminiApiKey": {
           "type": "string",
           "default": "",
-          "description": "Google Gemini API key for Gemini integration"
+          "description": "Google Gemini API key for Docker file generation"
         },
         "autoDocker.geminiModel": {
           "type": "string",
-          "default": "gemini-1.5-pro",
-          "enum": [
-            "gemini-1.5-pro",
-            "gemini-1.5-flash-latest",
-            "gemini-pro"
-          ],
-          "description": "Gemini model to use for Docker file generation"
-        },
-        "autoDocker.anthropicApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Anthropic API key for Claude integration"
-        },
-        "autoDocker.model": {
-          "type": "string",
-          "default": "gpt-4",
-          "description": "Model name to use (e.g., gpt-4, gpt-3.5-turbo, gemini-1.5-pro)"
-        },
-        "autoDocker.validationStrictMode": {
-          "type": "boolean",
-          "default": false,
-          "description": "Block file generation if critical validation errors are found (recommended for production)"
-        },
-        "autoDocker.overwriteFiles": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically overwrite existing Docker files without confirmation"
-        },
-        "autoDocker.includeNginx": {
-          "type": "boolean",
-          "default": true,
-          "description": "Include nginx.conf generation for frontend projects"
-        },
-        "autoDocker.useReverseProxy": {
-          "type": "boolean",
-          "default": true,
-          "description": "Use nginx as reverse proxy for development mode (separate app and nginx services). When false, uses static file serving."
+          "default": "gemini-2.0-flash",
+          "description": "Gemini model to use (e.g. gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash). Enter any valid Gemini model name."
         },
         "autoDocker.dockerOutputPath": {
           "type": "string",
@@ -244,55 +194,15 @@
           "default": true,
           "description": "Enable Guardrails AI validation for generated Docker files"
         },
-        "autoDocker.guardrailsStrictMode": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable strict validation mode (fails on warnings)"
-        },
-        "autoDocker.maxReasks": {
-          "type": "number",
-          "default": 2,
-          "description": "Maximum number of re-asks when validation fails (1-5)"
-        },
-        "autoDocker.useLangChain": {
-          "type": "boolean",
-          "default": true,
-          "description": "Use LangChain for structured output generation (recommended for better reliability)"
-        },
-        "autoDocker.langChainProvider": {
-          "type": "string",
-          "enum": [
-            "openai",
-            "gemini",
-            "anthropic"
-          ],
-          "default": "openai",
-          "description": "LangChain provider to use (uses same API key as main provider)"
-        },
         "autoDocker.enableStaticAnalysis": {
           "type": "boolean",
           "default": true,
           "description": "Enable static analysis and linting for generated Docker files"
         },
-        "autoDocker.autoFixIssues": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically fix common issues detected by static analysis"
-        },
-        "autoDocker.staticAnalysisStrictMode": {
-          "type": "boolean",
-          "default": false,
-          "description": "Fail generation if static analysis finds critical issues"
-        },
         "autoDocker.enableComposeSpecValidation": {
           "type": "boolean",
           "default": true,
           "description": "Enable Docker Compose Spec validation against official specification"
-        },
-        "autoDocker.composeSpecStrictMode": {
-          "type": "boolean",
-          "default": false,
-          "description": "Fail generation if Docker Compose has spec violations"
         },
         "autoDocker.enableObservability": {
           "type": "boolean",
@@ -304,50 +214,20 @@
           "default": true,
           "description": "Enable comprehensive security scanning for Docker files (secrets, vulnerabilities, compliance)"
         },
-        "autoDocker.securityStrictMode": {
-          "type": "boolean",
-          "default": false,
-          "description": "Fail generation if security scan finds critical issues"
-        },
         "autoDocker.enableDependencyAnalysis": {
           "type": "boolean",
           "default": true,
           "description": "Enable dependency graph analysis for vulnerability detection and optimization"
-        },
-        "autoDocker.dependencyStrictMode": {
-          "type": "boolean",
-          "default": false,
-          "description": "Fail generation if critical dependency vulnerabilities found"
         },
         "autoDocker.enablePromptEngineering": {
           "type": "boolean",
           "default": true,
           "description": "Enable advanced prompt engineering with optimization and chain-of-thought reasoning"
         },
-        "autoDocker.enableRAGEnhancedPrompts": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enhance prompts with RAG (Retrieval Augmented Generation) context"
-        },
-        "autoDocker.maxPromptTokens": {
-          "type": "number",
-          "default": 2000,
-          "description": "Maximum tokens allowed in prompts (for cost optimization)"
-        },
         "autoDocker.enableUIEnhancements": {
           "type": "boolean",
           "default": true,
           "description": "Enable enhanced UI/UX features including dashboards, notifications, and interactive views"
-        },
-        "autoDocker.showStatusBarUpdates": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show real-time updates in the status bar during generation"
-        },
-        "autoDocker.enableInteractiveNotifications": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable interactive notifications with action buttons"
         },
         "autoDocker.autoOpenDashboard": {
           "type": "boolean",
