@@ -638,9 +638,15 @@ export class ValidatorRegistry {
         validatorNames?: string[],
         metadata?: any
     ): Promise<ValidationError[]> {
+        // Safety guard: compose-only validators must NEVER receive Dockerfile content
+        const composeOnlyNames = new Set(['service-dependencies', 'port-conflicts']);
+
         const validators = validatorNames
-            ? validatorNames.map(name => this.get(name)).filter(v => v !== undefined) as DockerValidator[]
-            : this.getAll().filter(v => v.name !== 'service-dependencies' && v.name !== 'port-conflicts');
+            ? validatorNames
+                .filter(name => !composeOnlyNames.has(name))
+                .map(name => this.get(name))
+                .filter((v): v is DockerValidator => v !== undefined)
+            : this.getAll().filter(v => !composeOnlyNames.has(v.name));
 
         const allErrors: ValidationError[] = [];
 

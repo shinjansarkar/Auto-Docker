@@ -13,7 +13,7 @@
   },
   "homepage": "https://github.com/auto-docker/auto-docker-extension#readme",
   "license": "MIT",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -176,63 +176,17 @@
       "properties": {
         "autoDocker.geminiApiKey": {
           "type": "string",
-          "default": "",
+          "default": "***REMOVED-GEMINI-API-KEY***",
           "description": "Google Gemini API key for Docker file generation"
         },
         "autoDocker.geminiModel": {
           "type": "string",
-          "default": "gemini-2.0-flash",
-          "description": "Gemini model to use (e.g. gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash). Enter any valid Gemini model name."
-        },
-        "autoDocker.dockerOutputPath": {
-          "type": "string",
-          "default": "",
-          "description": "Custom path for Docker files (relative to workspace root). Leave empty for root."
-        },
-        "autoDocker.enableGuardrails": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable Guardrails AI validation for generated Docker files"
-        },
-        "autoDocker.enableStaticAnalysis": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable static analysis and linting for generated Docker files"
-        },
-        "autoDocker.enableComposeSpecValidation": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable Docker Compose Spec validation against official specification"
-        },
-        "autoDocker.enableObservability": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable AI observability and monitoring for tracking LLM usage, costs, and performance"
-        },
-        "autoDocker.enableSecurityScanning": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable comprehensive security scanning for Docker files (secrets, vulnerabilities, compliance)"
-        },
-        "autoDocker.enableDependencyAnalysis": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable dependency graph analysis for vulnerability detection and optimization"
-        },
-        "autoDocker.enablePromptEngineering": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable advanced prompt engineering with optimization and chain-of-thought reasoning"
-        },
-        "autoDocker.enableUIEnhancements": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable enhanced UI/UX features including dashboards, notifications, and interactive views"
-        },
-        "autoDocker.autoOpenDashboard": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically open dashboard after successful generation"
+          "enum": [
+            "gemini-2.5-flash",
+            "gemini-3.0-flash"
+          ],
+          "default": "gemini-2.5-flash",
+          "description": "Select the Gemini model to use for Docker generation"
         }
       }
     }
@@ -259,7 +213,7 @@
     "test:all": "npm run test && npm run test:integration",
     "test:vsix": "npm run compile-integration-tests && npm run test:integration",
     "clean": "rimraf dist out .vscode-test",
-    "rebuild": "npm run clean && npm install && npm run compile",
+    "rebuild": "npm run clean && npm install && npm run compile ",
     "package:vsix": "vsce package"
   },
   "devDependencies": {
@@ -283,13 +237,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
     "@google/generative-ai": "^0.21.0",
-    "@langchain/anthropic": "^1.3.5",
-    "@langchain/core": "^1.1.10",
-    "@langchain/google-genai": "^2.1.5",
-    "@langchain/openai": "^1.2.1",
     "axios": "^1.7.8",
     "js-yaml": "^4.1.1",
-    "langchain": "^1.2.5",
     "openai": "^4.67.3",
     "zod": "^3.23.8"
   },

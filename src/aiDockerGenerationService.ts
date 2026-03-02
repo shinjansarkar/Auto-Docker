@@ -97,11 +97,29 @@ export class AIDockerGenerationService {
             const finalValidation = validationResult.validationResult;
             
             if (finalValidation && !finalValidation.valid) {
-                errors.push('Final validation failed even after corrections');
                 // Try regeneration with more specific instructions
                 console.log('[AIDockerGenerationService] Attempting regeneration with fixes...');
                 const regenerated = await this.regenerateWithFixes(techStack, finalValidation.errors);
                 finalDockerFiles = regenerated;
+                
+                // Re-validate the regenerated files
+                console.log('[AIDockerGenerationService] Re-validating regenerated files...');
+                const revalidationResult = await this.guardrailsService.validateDockerFiles(regenerated);
+                
+                if (revalidationResult.validationResult && !revalidationResult.validationResult.valid) {
+                    console.warn('[AIDockerGenerationService] Regeneration still has issues:', revalidationResult.validationResult.errors);
+                    errors.push('Final validation failed even after corrections');
+                } else {
+                    console.log('[AIDockerGenerationService] ✅ Regeneration successful, validation passed');
+                    // Clear previous validation errors since regeneration fixed them
+                    const validationErrorMessages = finalValidation.errors.map((e: any) => e.message || String(e));
+                    validationErrorMessages.forEach(msg => {
+                        const index = errors.indexOf(msg);
+                        if (index > -1) {
+                            errors.splice(index, 1);
+                        }
+                    });
+                }
             }
 
             const generationTime = Date.now() - startTime;
@@ -168,7 +186,7 @@ Generate the following files based on the detected tech stack:
 1. **Dockerfile** - Multi-stage, optimized, production-ready
 2. **docker-compose.yml** - Complete service orchestration with all detected services
 3. **.dockerignore** - Comprehensive ignore patterns
-4. **nginx.conf** - Only if frontend detected, production-ready configuration
+4. **nginx.conf** - ALWAYS generate for frontend/fullstack projects as reverse proxy
 
 # CRITICAL RULES
 
@@ -182,14 +200,30 @@ Generate the following files based on the detected tech stack:
 - Use HEALTHCHECK for production readiness
 - Minimize layers and image size
 
-${techStack.frontend ? `
-## Frontend Dockerfile (if frontend):
-- Stage 1: Build stage with full dev dependencies
-- Build command: \`${techStack.frontend.buildCommand}\`
-- Stage 2: Production stage with nginx
-- Copy EXACT build output from: \`${techStack.frontend.buildOutputDir}\`
-- Serve on port ${techStack.frontend.devPort}
-` : ''}
+${techStack.frontend ? (() => {
+            const isSSR = /next\.?js|nuxt|remix|sveltekit|astro.*ssr/i.test(techStack.frontend.framework);
+            if (isSSR) {
+                return `
+## Frontend/Fullstack Dockerfile (SSR — ${techStack.frontend.framework}):
+- Stage 1 "builder": Use \`${techStack.baseImage}\`, install ALL deps (including devDependencies), build with \`${techStack.frontend.buildCommand}\`
+- Stage 2 "runner": Use \`${techStack.baseImage}\` (Node.js — NOT nginx, this is SSR), copy package files, run \`npm ci --omit=dev\`, copy built output from builder
+- For Next.js: copy \`.next\` dir and \`public\` dir. CMD should be \`["node_modules/.bin/next", "start"]\`
+- For Nuxt: copy \`.output\` dir. CMD should be \`["node", ".output/server/index.mjs"]\`
+- For Remix: copy \`build\` dir. CMD should be \`["node", "build/server/index.js"]\`
+- For SvelteKit: copy \`build\` dir. CMD should be \`["node", "build/index.js"]\`
+- Expose port ${techStack.frontend.devPort}
+- NEVER use nginx for SSR frameworks
+`;
+            } else {
+                return `
+## Frontend Dockerfile (SPA — ${techStack.frontend.framework}):
+- Stage 1 "builder": Use \`${techStack.baseImage}\`, install ALL deps, build with \`${techStack.frontend.buildCommand}\`
+- Stage 2 "runner": Use \`nginx:alpine\`, copy build output from \`${techStack.frontend.buildOutputDir}\` to \`/usr/share/nginx/html\`
+- Add SPA routing in nginx (try_files $uri /index.html)
+- Expose port 80
+`;
+            }
+        })() : ''}
 
 ${techStack.backend ? `
 ## Backend Dockerfile (if backend):
@@ -216,14 +250,22 @@ ${techStack.cacheStores.length > 0 ? `- Add cache services: ${techStack.cacheSto
 - Exclude build artifacts
 - Exclude test files
 
-${techStack.frontend && techStack.projectType === 'fullstack' ? `
-## nginx.conf Rules (for frontend):
-- Listen on port ${techStack.frontend.devPort}
+${(techStack.frontend || techStack.projectType === 'fullstack') ? `
+## nginx.conf Rules:
+${techStack.projectType === 'fullstack' || techStack.frameworks.some((f: string) => /next|nuxt|remix|sveltekit/i.test(f)) ? `### For SSR/Fullstack (Reverse Proxy):
+- Listen on port 80
+- Proxy requests to backend application at localhost:${techStack.exposedPorts[0] || 3000}
+- Add proper proxy headers (X-Real-IP, X-Forwarded-For, X-Forwarded-Proto)
+- Enable WebSocket support (Upgrade, Connection headers)
+- Configure client_max_body_size for uploads
+- Add gzip compression for performance
+- Set security headers (X-Frame-Options, X-Content-Type-Options)
+- Cache static assets (_next/static with long expiry)` : `### For Static Frontend:
+- Listen on port ${techStack.frontend?.devPort || 80}
 - Serve from /usr/share/nginx/html
-- Configure reverse proxy to backend if fullstack
+- Configure SPA routing (try_files $uri /index.html)
 - Add gzip compression
-- Set proper headers
-- Configure SPA routing (try_files)
+- Set proper security headers`}
 ` : ''}
 
 # OUTPUT FORMAT
@@ -300,7 +342,7 @@ Generate production-ready, secure, optimized Docker configurations NOW.`;
                 dockerfile: this.generateFallbackDockerfile(techStack),
                 dockerCompose: this.generateFallbackCompose(techStack),
                 dockerIgnore: this.generateFallbackDockerignore(),
-                nginxConf: techStack.frontend ? this.generateFallbackNginx(techStack) : undefined,
+                nginxConf: (techStack.frontend || techStack.projectType === 'fullstack') ? this.generateFallbackNginx(techStack) : undefined,
                 validationResult: {
                     valid: false,
                     errors: [{ field: 'parse', message: 'Failed to parse AI response', severity: 'critical' }],
@@ -339,14 +381,136 @@ Generate corrected Docker files that fix these issues. Output in JSON format:
     }
 
     /**
-     * Fallback Dockerfile generation
+     * Fallback Dockerfile generation — produces valid, framework-aware Dockerfiles
+     * even when the AI generation pipeline fails.
      */
     private generateFallbackDockerfile(techStack: AIDetectedTechStack): string {
         const { baseImage, exposedPorts, buildSteps, runCommand } = techStack;
-        
+
+        // ── Next.js: multi-stage optimised build ──────────────────────────────
+        if (techStack.frameworks.some(f => /next\.?js/i.test(f))) {
+            const nodeImage = baseImage.startsWith('node:') ? baseImage : 'node:20-alpine';
+            const port = exposedPorts[0] || 3000;
+            const buildCmd = techStack.frontend?.buildCommand || 'npm run build';
+            return `# Stage 1 — Install all deps & build
+FROM ${nodeImage} AS builder
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN ${buildCmd}
+
+# Stage 2 — Production runner (leaner image, no devDependencies)
+FROM ${nodeImage} AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \\
+    adduser --system --uid 1001 nextjs
+
+# Copy package files and install production deps only
+COPY --from=builder /app/package*.json ./
+RUN npm ci --omit=dev
+
+# Copy built artefacts
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Switch to non-root user
+USER nextjs
+
+EXPOSE ${port}
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \\
+  CMD wget -qO- http://localhost:${port}/ || exit 1
+
+CMD ["node_modules/.bin/next", "start"]
+`;
+        }
+
+        // ── Vite / CRA / Angular — static build served by nginx ───────────────
+        if (techStack.projectType === 'frontend-only' &&
+            techStack.frameworks.some(f => /react|vue|angular|svelte|astro|vite/i.test(f))) {
+            const nodeImage = baseImage.startsWith('node:') ? baseImage : 'node:20-alpine';
+            const buildDir = techStack.frontend?.buildOutputDir || 'dist';
+            const port = exposedPorts[0] || 80;
+            const buildCmd = techStack.frontend?.buildCommand || 'npm run build';
+            return `# Stage 1 — Build
+FROM ${nodeImage} AS builder
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+RUN ${buildCmd}
+
+# Stage 2 — Serve with nginx
+FROM nginx:alpine AS runner
+
+# Create non-root user for nginx
+RUN addgroup -g 1001 -S nginx-app && \\
+    adduser -u 1001 -S nginx-app -G nginx-app
+
+COPY --from=builder --chown=nginx-app:nginx-app /app/${buildDir} /usr/share/nginx/html
+
+# Switch to non-root user
+USER nginx-app
+
+EXPOSE ${port}
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\
+  CMD wget -qO- http://localhost:${port}/ || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
+`;
+        }
+
+        // ── Generic Node.js server ─────────────────────────────────────────────
+        if (baseImage.startsWith('node:') || techStack.primaryRuntime.toLowerCase().includes('node')) {
+            const nodeImage = baseImage.startsWith('node:') ? baseImage : 'node:20-alpine';
+            const port = exposedPorts[0] || 3000;
+            const installSteps = buildSteps.length > 0
+                ? buildSteps.join('\n')
+                : 'RUN npm ci --omit=dev';
+            const cmdStr = runCommand.startsWith('[') ? runCommand : `["sh", "-c", "${runCommand}"]`;
+            return `FROM ${nodeImage}
+
+WORKDIR /app
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs && \\
+    adduser --system --uid 1001 appuser
+
+COPY package*.json ./
+${installSteps}
+
+COPY --chown=appuser:nodejs . .
+
+# Switch to non-root user
+USER appuser
+
+EXPOSE ${port}
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \\
+  CMD wget -qO- http://localhost:${port}/ || exit 1
+
+CMD ${cmdStr}
+`;
+        }
+
+        // ── Generic fallback (non-Node) ───────────────────────────────────────
         return `FROM ${baseImage}
 
 WORKDIR /app
+
+# Create non-root user
+RUN addgroup --system --gid 1001 appgroup && \\
+    adduser --system --uid 1001 appuser
 
 # Copy dependency files
 COPY package*.json ./
@@ -355,7 +519,10 @@ COPY package*.json ./
 ${buildSteps.length > 0 ? buildSteps.join('\n') : 'RUN npm install'}
 
 # Copy source code
-COPY . .
+COPY --chown=appuser:appgroup . .
+
+# Switch to non-root user
+USER appuser
 
 # Expose ports
 ${exposedPorts.map(port => `EXPOSE ${port}`).join('\n')}
@@ -369,28 +536,37 @@ CMD ${runCommand}
      * Fallback docker-compose.yml generation
      */
     private generateFallbackCompose(techStack: AIDetectedTechStack): string {
-        return `version: '3.8'
+        const port = techStack.exposedPorts[0] || 3000;
+        const isNextJs = techStack.frameworks.some(f => /next\.?js/i.test(f));
+        const nodeEnvVar = isNextJs ? 'NODE_ENV' : 'NODE_ENV';
 
-services:
-  app:
-    build: .
-    ports:
-      - "${techStack.exposedPorts[0] || 3000}:${techStack.exposedPorts[0] || 3000}"
-    environment:
-      NODE_ENV: production
-    restart: unless-stopped
-
-${techStack.databases.map(db => `  ${db.type}:
-    image: ${db.type}:${db.version || 'latest'}
+        const dbServices = techStack.databases.map(db => `  ${db.type.toLowerCase()}:
+    image: ${db.type.toLowerCase()}:${db.version || 'latest'}
     ports:
       - "${db.port}:${db.port}"
     volumes:
-      - ${db.type}_data:/var/lib/${db.type}/data
-    restart: unless-stopped
-`).join('\n')}
+      - ${db.type.toLowerCase()}_data:/var/lib/${db.type.toLowerCase()}/data
+    restart: unless-stopped`).join('\n\n');
 
-volumes:
-${techStack.databases.map(db => `  ${db.type}_data:`).join('\n')}
+        const dbVolumes = techStack.databases.map(db => `  ${db.type.toLowerCase()}_data:`).join('\n');
+
+        return `services:
+  app:
+    build: .
+    ports:
+      - "${port}:${port}"
+    environment:
+      ${nodeEnvVar}: production
+      PORT: "${port}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:${port}/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+${dbServices ? `\n${dbServices}` : ''}
+${dbVolumes ? `\nvolumes:\n${dbVolumes}` : ''}
 `;
     }
 
@@ -416,25 +592,121 @@ coverage
 
     /**
      * Fallback nginx.conf generation
+     * Generates reverse proxy config for fullstack/SSR or static serving for frontend-only
      */
     private generateFallbackNginx(techStack: AIDetectedTechStack): string {
-        const port = techStack.frontend?.devPort || 80;
+        const isSSRorFullstack = techStack.projectType === 'fullstack' || 
+                                 techStack.frameworks.some(f => /next|nuxt|remix|sveltekit/i.test(f));
         
-        return `server {
+        if (isSSRorFullstack) {
+            // Reverse proxy configuration for SSR/fullstack apps
+            const backendPort = techStack.exposedPorts[0] || 3000;
+            return `# Nginx reverse proxy configuration for ${techStack.frameworks.join(', ')}
+
+upstream backend {
+    server app:${backendPort};
+}
+
+server {
+    listen 80;
+    server_name localhost;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Max upload size
+    client_max_body_size 10M;
+
+    # Proxy to backend application
+    location / {
+        proxy_pass http://backend;
+        proxy_http_version 1.1;
+        
+        # WebSocket support
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        
+        # Standard proxy headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Cache static assets (Next.js, etc.)
+    location /_next/static {
+        proxy_pass http://backend;
+        proxy_cache_valid 200 365d;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # Image optimization
+    location /_next/image {
+        proxy_pass http://backend;
+        proxy_cache_valid 200 7d;
+    }
+
+    # Health check endpoint
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}
+`;
+        } else {
+            // Static file serving for frontend-only projects
+            const port = techStack.frontend?.devPort || 80;
+            return `# Nginx configuration for static frontend serving
+
+server {
     listen ${port};
     server_name localhost;
     
     root /usr/share/nginx/html;
     index index.html;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
     
+    # SPA routing - serve index.html for all routes
     location / {
         try_files $uri $uri/ /index.html;
     }
+
+    # Cache static assets
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
     
+    # Gzip compression
     gzip on;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+    gzip_vary on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Health check
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
 }
 `;
+        }
     }
 
     /**

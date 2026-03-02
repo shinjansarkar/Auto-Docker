@@ -636,7 +636,6 @@ Auto-Docker/
 │   ├── aiTechStackDetector.ts          # AI tech stack detection (any framework)
 │   ├── guardrailsService.ts            # Validation & security checks
 │   ├── fileManager.ts                  # File operations & preview mode
-│   ├── langchainService.ts             # Advanced prompt engineering
 │   ├── comprehensiveAnalyzer.ts        # Project structure analysis
 │   ├── dependencyGraphService.ts       # Dependency relationship mapping
 │   ├── dockerValidators.ts             # Dockerfile validation logic

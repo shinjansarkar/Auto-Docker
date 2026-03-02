@@ -97,7 +97,7 @@ export class PromptEngineeringService {
     private fewShotExamples: Map<string, FewShotExample[]> = new Map();
     private metrics: PromptMetrics[] = [];
     // RAG service disabled - not needed for core functionality
-    // private ragService?: RAGService;
+    private ragService?: any;
     private config: vscode.WorkspaceConfiguration;
     private optimizationStrategies: OptimizationStrategy[] = [];
 
@@ -110,7 +110,7 @@ export class PromptEngineeringService {
         this.initializeTemplates();
         this.initializeOptimizationStrategies();
         this.initializeFewShotExamples();
-        
+
         // RAG Service will be initialized when needed
         // RAG integration disabled temporarily due to API changes
     }
@@ -140,7 +140,7 @@ REQUIREMENTS:
 INSTRUCTIONS:
 1. Analyze the project structure and dependencies
 2. Create a multi-stage Dockerfile optimized for {{projectSize}} projects
-3. Implement security best practices
+3. Implement STRICT security best practices (MUST use pinned versions, MUST run as non-root user, MUST NOT leak secrets)
 4. Optimize for build speed and image size
 5. Include health checks and proper signal handling
 
@@ -187,9 +187,10 @@ Think about:
 
 STEP 4: IMPLEMENT SECURITY
 Consider:
-- Non-root user
+- Non-root user (MANDATORY)
+- Specific Pinned versions instead of latest (MANDATORY)
 - Minimal attack surface
-- Secret management
+- Secret management (MANDATORY zero secrets in Dockerfile)
 - Vulnerability scanning
 
 STEP 5: GENERATE DOCKERFILE
@@ -221,7 +222,8 @@ Create a docker-compose.yml file that:
 2. Sets up proper networking
 3. Configures volumes for data persistence
 4. Implements health checks
-5. Manages environment variables securely
+5. Manages environment variables securely without exposing hardcoded secrets
+6. ABSOLUTELY NO privileged mode or host networking
 
 Generate a production-ready docker-compose.yml file.`,
             variables: ['services', 'dependencies', 'networkRequirements'],
@@ -324,7 +326,7 @@ Analyze and provide specific optimization recommendations to improve performance
 
     private addTemplate(template: PromptTemplate): void {
         this.templates.set(template.id, template);
-        
+
         // Add to version tracking
         if (!this.templateVersions.has(template.id)) {
             this.templateVersions.set(template.id, []);
@@ -345,13 +347,13 @@ Analyze and provide specific optimization recommendations to improve performance
                 apply: (prompt: string, context: PromptContext) => {
                     // Remove redundant whitespace
                     let optimized = prompt.replace(/\s+/g, ' ').trim();
-                    
+
                     // Remove verbose instructions for simple projects
                     if (context.complexity === 'simple') {
                         optimized = optimized.replace(/Let's think through this step by step\./g, '');
                         optimized = optimized.replace(/Consider:[\s\S]*?(?=\n\n|\n[A-Z]|$)/g, '');
                     }
-                    
+
                     return optimized;
                 }
             },
@@ -361,7 +363,7 @@ Analyze and provide specific optimization recommendations to improve performance
                 weight: 0.4,
                 apply: (prompt: string, context: PromptContext) => {
                     let enhanced = prompt;
-                    
+
                     // Add framework-specific context
                     if (context.framework) {
                         const frameworkContext = this.getFrameworkContext(context.framework);
@@ -370,13 +372,13 @@ Analyze and provide specific optimization recommendations to improve performance
                             `${context.framework}\n\nFRAMEWORK NOTES:\n${frameworkContext}`
                         );
                     }
-                    
+
                     // Add error-based context
                     if (context.errorHistory && context.errorHistory.length > 0) {
                         const errorContext = `\n\nPREVIOUS ERRORS TO AVOID:\n${context.errorHistory.slice(0, 3).join('\n')}`;
                         enhanced += errorContext;
                     }
-                    
+
                     return enhanced;
                 }
             },
@@ -387,12 +389,12 @@ Analyze and provide specific optimization recommendations to improve performance
                 apply: (prompt: string, context: PromptContext) => {
                     const examples = this.getFewShotExamples(context, 2);
                     if (examples.length === 0) return prompt;
-                    
+
                     let examplesText = '\n\nEXAMPLES FOR REFERENCE:\n\n';
                     examples.forEach((ex, idx) => {
                         examplesText += `Example ${idx + 1}:\nInput: ${ex.input}\nOutput: ${ex.output}\n\n`;
                     });
-                    
+
                     return prompt + examplesText;
                 }
             },
@@ -402,7 +404,7 @@ Analyze and provide specific optimization recommendations to improve performance
                 weight: 0.6,
                 apply: (prompt: string, context: PromptContext) => {
                     if (context.complexity !== 'complex') return prompt;
-                    
+
                     const cotPrefix = `Let's approach this systematically:\n\n`;
                     const cotSteps = `
 REASONING STEPS:
@@ -413,7 +415,7 @@ REASONING STEPS:
 5. Implement with best practices
 
 Now, let's proceed:\n\n`;
-                    
+
                     return cotPrefix + cotSteps + prompt;
                 }
             },
@@ -423,7 +425,7 @@ Now, let's proceed:\n\n`;
                 weight: 0.7,
                 apply: (prompt: string, context: PromptContext) => {
                     if (!this.ragService) return prompt;
-                    
+
                     // RAG context will be added asynchronously
                     // This is a placeholder for the synchronous strategy
                     return prompt + '\n\n[RAG context will be injected here]';
@@ -435,7 +437,7 @@ Now, let's proceed:\n\n`;
                 weight: 0.5,
                 apply: (prompt: string, context: PromptContext) => {
                     if (!context.constraints || context.constraints.length === 0) return prompt;
-                    
+
                     const constraintsText = `\n\nCONSTRAINTS:\n${context.constraints.map(c => `- ${c}`).join('\n')}`;
                     return prompt + constraintsText;
                 }
@@ -587,14 +589,14 @@ volumes:
     private getFewShotExamples(context: PromptContext, count: number): FewShotExample[] {
         const key = `${context.projectType}-${context.framework || 'default'}`;
         const examples = this.fewShotExamples.get(key) || [];
-        
+
         // Sort by quality and success rate
         const sorted = examples.sort((a, b) => {
             const scoreA = (a.quality * 0.6) + (a.successRate * 0.4);
             const scoreB = (b.quality * 0.6) + (b.successRate * 0.4);
             return scoreB - scoreA;
         });
-        
+
         return sorted.slice(0, count);
     }
 
@@ -614,7 +616,7 @@ volumes:
     ): Promise<OptimizedPrompt> {
         const startTime = Date.now();
         const template = this.templates.get(templateId);
-        
+
         if (!template) {
             throw new Error(`Template not found: ${templateId}`);
         }
@@ -628,12 +630,12 @@ volumes:
             .sort((a, b) => b.weight - a.weight);
 
         const improvements: string[] = [];
-        
+
         for (const strategy of enabledStrategies) {
             const before = this.estimateTokens(prompt);
             prompt = strategy.apply(prompt, context);
             const after = this.estimateTokens(prompt);
-            
+
             if (before !== after) {
                 improvements.push(`${strategy.name}: ${before - after} tokens saved`);
             }
@@ -734,8 +736,8 @@ volumes:
         steps.push({
             step: 4,
             description: 'Evaluate Security Requirements',
-            reasoning: 'Applying security best practices',
-            output: 'Security measures: non-root user, minimal base image, secret management'
+            reasoning: 'Applying STRICT security best practices for zero vulnerabilities',
+            output: 'Security measures MUST INCLUDE: non-root user, specific pinned base image versions, zero hardcoded secrets, and no privileged modes'
         });
 
         // Step 5: Optimization Strategy
@@ -757,7 +759,7 @@ volumes:
             cot += `Output: ${step.output}\n`;
         });
         cot += '\nBased on this analysis, proceed with generation:\n';
-        
+
         return cot + prompt;
     }
 
@@ -776,7 +778,7 @@ volumes:
             // RAG integration temporarily disabled
             // const ragResults = await this.ragService.query(query, 3);
             const ragResults: any[] = [];
-            
+
             if (!ragResults || ragResults.length === 0) {
                 return '';
             }
@@ -796,7 +798,7 @@ volumes:
 
     private injectRAGContext(prompt: string, ragContext: string): string {
         if (!ragContext) return prompt;
-        
+
         // Insert RAG context after the main instructions
         const sections = prompt.split('\n\n');
         sections.splice(2, 0, ragContext);
@@ -815,13 +817,13 @@ volumes:
             examplesSection += `Example ${idx + 1} (Quality: ${example.quality}/100, Success Rate: ${example.successRate}%):\n`;
             examplesSection += `Input: ${example.input}\n`;
             examplesSection += `Output:\n${example.output}\n\n`;
-            
+
             // Update usage statistics
             example.usage++;
         });
 
         examplesSection += 'Using these examples as reference, generate appropriate output:\n';
-        
+
         return examplesSection + prompt;
     }
 
@@ -831,22 +833,22 @@ volumes:
 
     private interpolateTemplate(template: string, context: PromptContext): string {
         let result = template;
-        
+
         // Replace standard variables
         result = result.replace(/\{\{projectType\}\}/g, context.projectType || 'unknown');
         result = result.replace(/\{\{language\}\}/g, context.language || 'unknown');
         result = result.replace(/\{\{framework\}\}/g, context.framework || 'none');
         result = result.replace(/\{\{complexity\}\}/g, context.complexity || 'moderate');
         result = result.replace(/\{\{projectSize\}\}/g, context.projectSize || 'medium');
-        
+
         // Replace array variables
-        result = result.replace(/\{\{dependencies\}\}/g, 
+        result = result.replace(/\{\{dependencies\}\}/g,
             context.dependencies?.join(', ') || 'none specified');
         result = result.replace(/\{\{requirements\}\}/g,
             context.requirements?.map(r => `- ${r}`).join('\n') || 'No specific requirements');
         result = result.replace(/\{\{errorHistory\}\}/g,
             context.errorHistory?.join('\n') || 'No previous errors');
-        
+
         return result;
     }
 
@@ -861,13 +863,13 @@ volumes:
             'springboot': 'Spring Boot requires Java 11+. Port 8080 is standard. Use layered JARs.',
             'dotnet': '.NET 6+ recommended. Use aspnet runtime. Port 80/443 standard.'
         };
-        
+
         return contexts[framework.toLowerCase()] || `${framework} framework detected`;
     }
 
     private getTechRequirements(context: PromptContext): string {
         const reqs: string[] = [];
-        
+
         if (context.language === 'javascript' || context.language === 'typescript') {
             reqs.push('Node.js runtime');
         } else if (context.language === 'python') {
@@ -875,15 +877,15 @@ volumes:
         } else if (context.language === 'java') {
             reqs.push('JRE/JDK');
         }
-        
+
         if (context.framework) {
             reqs.push(`${context.framework} framework`);
         }
-        
+
         if (context.dependencies && context.dependencies.length > 0) {
             reqs.push(`${context.dependencies.length} dependencies`);
         }
-        
+
         return reqs.join(', ');
     }
 
@@ -912,10 +914,10 @@ volumes:
     private truncateToTokenLimit(prompt: string, maxTokens: number): string {
         const currentTokens = this.estimateTokens(prompt);
         if (currentTokens <= maxTokens) return prompt;
-        
+
         const ratio = maxTokens / currentTokens;
         const targetLength = Math.floor(prompt.length * ratio * 0.95); // 95% to be safe
-        
+
         return prompt.substring(0, targetLength) + '\n\n[Truncated to fit token limit]';
     }
 
@@ -932,23 +934,23 @@ volumes:
 
     private calculatePromptQuality(prompt: string, context: PromptContext): number {
         let score = 100;
-        
+
         // Deduct for missing context
         if (!prompt.includes(context.projectType)) score -= 10;
         if (context.framework && !prompt.includes(context.framework)) score -= 5;
-        
+
         // Deduct for excessive length
         const tokens = this.estimateTokens(prompt);
         if (tokens > 1000) score -= Math.min((tokens - 1000) / 100, 20);
-        
+
         // Add for best practices mentions
         if (prompt.includes('security')) score += 5;
         if (prompt.includes('optimization')) score += 5;
         if (prompt.includes('best practices')) score += 5;
-        
+
         // Add for structured approach
         if (prompt.includes('STEP') || prompt.includes('Step')) score += 10;
-        
+
         return Math.max(0, Math.min(100, score));
     }
 
@@ -958,7 +960,7 @@ volumes:
 
     private recordMetrics(metrics: PromptMetrics): void {
         this.metrics.push(metrics);
-        
+
         // Keep only last 1000 metrics
         if (this.metrics.length > 1000) {
             this.metrics = this.metrics.slice(-1000);
@@ -975,7 +977,7 @@ volumes:
     public getAverageQuality(templateId?: string): number {
         const relevantMetrics = this.getMetrics(templateId);
         if (relevantMetrics.length === 0) return 0;
-        
+
         const sum = relevantMetrics.reduce((acc, m) => acc + m.quality, 0);
         return sum / relevantMetrics.length;
     }
@@ -997,7 +999,7 @@ volumes:
         if (!variantId) {
             return this.templates.get(templateId);
         }
-        
+
         return this.templates.get(variantId);
     }
 
@@ -1010,7 +1012,7 @@ volumes:
     } {
         const qualityA = this.getAverageQuality(templateIdA);
         const qualityB = this.getAverageQuality(templateIdB);
-        
+
         return {
             templateA: templateIdA,
             templateB: templateIdB,
@@ -1032,13 +1034,13 @@ volumes:
         const templates = Array.from(this.templates.values())
             .filter(t => t.category === category)
             .sort((a, b) => b.priority - a.priority);
-        
+
         if (templates.length === 0) {
             throw new Error(`No templates found for category: ${category}`);
         }
-        
+
         const template = templates[0];
-        
+
         // Optimize with all enhancements
         return this.optimizePrompt(template.id, context, {
             enableChainOfThought: context.complexity === 'complex',
@@ -1061,7 +1063,7 @@ volumes:
         if (!template) {
             throw new Error(`Template not found: ${id}`);
         }
-        
+
         const updated = { ...template, ...updates, updatedAt: new Date() };
         this.templates.set(id, updated);
     }
