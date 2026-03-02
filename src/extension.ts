@@ -1258,7 +1258,7 @@ function getFullDashboardHtml(): string {
                 </div>
                 <div class="pipeline-step">
                     <span class="step-number">3</span>
-                    <span>LangChain Output</span>
+                    <span>AI Generation</span>
                 </div>
                 <div class="pipeline-step">
                     <span class="step-number">4</span>

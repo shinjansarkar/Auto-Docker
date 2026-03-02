@@ -31,12 +31,14 @@ const DockerComposeSchema = z.string().min(10).refine(
     (val) => {
         try {
             const parsed = yaml.load(val) as any;
-            return parsed && parsed.version && parsed.services;
+            // 'version' is optional in modern Docker Compose v2 format;
+            // only require that 'services' is defined.
+            return parsed && typeof parsed === 'object' && parsed.services;
         } catch {
             return false;
         }
     },
-    { message: 'docker-compose.yml must be valid YAML with version and services' }
+    { message: 'docker-compose.yml must be valid YAML with a services block' }
 );
 
 const DockerIgnoreSchema = z.string().min(1);
@@ -65,10 +67,10 @@ export class GuardrailsService {
      */
     private loadConfig(): GuardrailsConfig {
         const config = vscode.workspace.getConfiguration('autoDocker');
-        
+
         return {
             enabled: config.get<boolean>('enableGuardrails', true),
-            strictMode: false, // strict mode disabled
+            strictMode: false, // warnings are surfaced but do not block generation
             maxReasks: 2,
             validators: [
                 { name: 'no-root-user', enabled: true, severity: 'error', onFail: 'reask' },
@@ -136,8 +138,8 @@ export class GuardrailsService {
 
             // Calculate final score
             validationResult.validation_score = this.calculateScore(validationResult);
-            validationResult.valid = validationResult.errors.length === 0 && 
-                                     (!this.config.strictMode || validationResult.warnings.length === 0);
+            validationResult.valid = validationResult.errors.length === 0 &&
+                (!this.config.strictMode || validationResult.warnings.length === 0);
 
             const duration = Date.now() - startTime;
             if (validationResult.valid) {
@@ -295,11 +297,11 @@ export class GuardrailsService {
 
         try {
             const compose = yaml.load(files.dockerCompose) as any;
-            
+
             if (compose && compose.services) {
                 // Check if services in compose match Dockerfile expectations
                 const serviceNames = Object.keys(compose.services);
-                
+
                 // Validate service names are reasonable
                 serviceNames.forEach(name => {
                     if (!/^[a-z0-9_-]+$/i.test(name)) {
@@ -327,11 +329,11 @@ export class GuardrailsService {
 
         try {
             const compose = yaml.load(files.dockerCompose) as any;
-            
+
             if (compose && compose.services) {
                 for (const [serviceName, service] of Object.entries(compose.services as any)) {
                     const environment = (service as any).environment || {};
-                    
+
                     // Check for undefined environment variables
                     for (const [key, value] of Object.entries(environment)) {
                         if (!value || value === '') {
@@ -392,7 +394,7 @@ export class GuardrailsService {
                         return line;
                     });
                     fixed.dockerfile = fixedLines.join('\n');
-                    
+
                     if (original !== fixed.dockerfile) {
                         corrections.push({
                             field: 'dockerfile',
@@ -402,7 +404,7 @@ export class GuardrailsService {
                         });
                     }
                 }
-                
+
                 // Auto-fix: Remove duplicate COPY --from=builder (CRITICAL FIX)
                 if (error.message.includes('Multiple COPY') || error.message.includes('duplicate')) {
                     const original = fixed.dockerfile;
@@ -420,7 +422,7 @@ export class GuardrailsService {
                         return line;
                     });
                     fixed.dockerfile = fixedLines.join('\n');
-                    
+
                     if (original !== fixed.dockerfile) {
                         corrections.push({
                             field: 'dockerfile',
@@ -430,16 +432,16 @@ export class GuardrailsService {
                         });
                     }
                 }
-                
+
                 // Auto-fix: Add proper permissions if missing
                 if (error.message.includes('permission') && !fixed.dockerfile.includes('chown -R nginx:nginx')) {
                     const lines = fixed.dockerfile.split('\n');
                     const copyIndex = lines.findIndex(l => l.includes('COPY --from=') && l.includes('/usr/share/nginx/html'));
-                    
+
                     if (copyIndex > 0) {
                         lines.splice(copyIndex + 1, 0, '', '# Set proper permissions for nginx user', 'RUN chown -R nginx:nginx /usr/share/nginx/html && \\', '    chmod -R 755 /usr/share/nginx/html');
                         fixed.dockerfile = lines.join('\n');
-                        
+
                         corrections.push({
                             field: 'dockerfile',
                             original: 'Missing permission setup',
@@ -453,11 +455,11 @@ export class GuardrailsService {
                 if (error.message.includes('USER directive') && !error.message.includes('nginx')) {
                     const lines = fixed.dockerfile.split('\n');
                     const cmdIndex = lines.findIndex(l => l.trim().startsWith('CMD '));
-                    
+
                     if (cmdIndex > 0 && !fixed.dockerfile.includes('USER ')) {
                         lines.splice(cmdIndex, 0, '', '# Run as non-root user', 'USER nodejs');
                         fixed.dockerfile = lines.join('\n');
-                        
+
                         corrections.push({
                             field: 'dockerfile',
                             original: 'No USER directive',
@@ -474,7 +476,7 @@ export class GuardrailsService {
                         /FROM\s+(\w+):latest/g,
                         'FROM $1:20-alpine'
                     );
-                    
+
                     if (original !== fixed.dockerfile) {
                         corrections.push({
                             field: 'dockerfile',
@@ -484,20 +486,20 @@ export class GuardrailsService {
                         });
                     }
                 }
-                
+
                 // Auto-fix: Add HEALTHCHECK if missing
                 if (error.message.includes('HEALTHCHECK') || error.message.includes('health check')) {
                     const lines = fixed.dockerfile.split('\n');
                     const cmdIndex = lines.findIndex(l => l.trim().startsWith('CMD '));
-                    
+
                     if (cmdIndex > 0 && !fixed.dockerfile.includes('HEALTHCHECK')) {
-                        const healthCheck = fixed.dockerfile.includes('nginx') 
+                        const healthCheck = fixed.dockerfile.includes('nginx')
                             ? 'HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \\\n  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1'
                             : 'HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\\n  CMD curl -f http://localhost:3000/health || exit 1';
-                        
+
                         lines.splice(cmdIndex, 0, '', '# Health check', healthCheck, '');
                         fixed.dockerfile = lines.join('\n');
-                        
+
                         corrections.push({
                             field: 'dockerfile',
                             original: 'Missing HEALTHCHECK',
@@ -517,11 +519,11 @@ export class GuardrailsService {
      */
     generateReport(result: ValidationResult): string {
         const lines: string[] = [];
-        
+
         lines.push('🛡️ Guardrails Validation Report');
-        lines.push('=' .repeat(50));
+        lines.push('='.repeat(50));
         lines.push('');
-        
+
         lines.push(`Status: ${result.valid ? '✅ PASSED' : '❌ FAILED'}`);
         lines.push(`Validation Score: ${result.validation_score}/100`);
         lines.push(`Reasks: ${result.reask_count}`);
@@ -563,10 +565,32 @@ export class GuardrailsService {
 
     /**
      * Helper: Get enabled validator names
+     * Filters validators by context so compose-only validators
+     * never run against Dockerfile content (and vice-versa).
      */
     private getEnabledValidatorNames(tags: string[]): string[] {
+        // Validators that only make sense when parsing docker-compose YAML
+        const composeOnlyValidators = new Set(['service-dependencies', 'port-conflicts']);
+
+        // Validators that only make sense when parsing a Dockerfile
+        const dockerfileOnlyValidators = new Set([
+            'no-root-user', 'multi-stage-build', 'valid-ports',
+            'no-hardcoded-secrets', 'health-check-presence',
+            'version-pinning', 'no-user-nginx', 'no-duplicate-copy'
+        ]);
+
+        const isDockerfileContext = tags.includes('dockerfile');
+        const isComposeContext    = tags.includes('docker-compose');
+
         return this.config.validators
             .filter(v => v.enabled)
+            .filter(v => {
+                // When validating a Dockerfile, skip compose-only validators
+                if (isDockerfileContext && composeOnlyValidators.has(v.name)) { return false; }
+                // When validating a Compose file, skip dockerfile-only validators
+                if (isComposeContext   && dockerfileOnlyValidators.has(v.name)) { return false; }
+                return true;
+            })
             .map(v => v.name);
     }
 

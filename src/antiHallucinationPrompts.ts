@@ -62,7 +62,15 @@ export const ANTI_HALLUCINATION_RULES = `
    - Service names must be DNS-compatible (lowercase, no spaces)
    - Use consistent naming across Dockerfile, docker-compose.yml, and nginx.conf
 
-10. **ERROR PREVENTION**
+10. **STRICT SECURITY REQUIREMENTS (ZERO TOLERANCE)**
+    - NEVER use :latest or untagged base images. ALWAYS pin to specific versions (e.g. node:20.11.1-alpine)
+    - NEVER run containers as root. ALWAYS create and use a non-root user (e.g., USER nodejs)
+    - ALWAYS ensure no hardcoded secrets or passwords exist anywhere in the generated files.
+    - ALWAYS use .dockerignore to prevent sensitive data leakage.
+    - NEVER use curl/wget with --insecure flags.
+    - NEVER add privileged flags in docker-compose.
+
+11. **ERROR PREVENTION**
     - Syntax must be valid YAML for docker-compose.yml
     - Syntax must be valid nginx configuration
     - All referenced services must be defined
@@ -75,11 +83,12 @@ VALIDATION CHECKLIST BEFORE GENERATING:
 ✅ Build tool matches package manager in analysis
 ✅ Environment variables match detected variables or are generic
 ✅ File paths match detected project structure
-✅ Base images are official and appropriate for detected stack
+✅ Base images are official, securely pinned with explicit versions, and appropriate for detected stack
 ✅ Service dependencies are correctly defined
 ✅ Volume mounts match actual directories
 ✅ Network configuration is valid and necessary
 ✅ nginx.conf is generated for reverse proxy, load balancing, and SSL support
+✅ SECURE BY DEFAULT: non-root, pinned versions, proper health checks, dropped privileges
 
 FORBIDDEN ACTIONS:
 ❌ DO NOT invent frameworks not in analysis
@@ -87,6 +96,8 @@ FORBIDDEN ACTIONS:
 ❌ DO NOT assume database when none detected
 ❌ DO NOT use invalid YAML or nginx syntax
 ❌ DO NOT use outdated or insecure base images
+❌ DO NOT use :latest tags
+❌ DO NOT run as root
 ❌ DO NOT include unused services or volumes
 ❌ DO NOT create circular service dependencies
 `;
@@ -106,11 +117,13 @@ DOCKERFILE GENERATION RULES:
    - Use AS keyword: FROM node:18 AS build
    - COPY --from=build for artifacts
 
-3. **Security Best Practices**
-   - DO NOT run as root user
-   - Create non-root user: RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
-   - Set USER directive: USER nodejs
-   - Use COPY --chown for file permissions
+3. **Security Best Practices (MANDATORY)**
+   - NEVER use the :latest tag. Always pin base images to specific versions (e.g., node:20.11.1-alpine instead of node:alpine).
+   - DO NOT run as root user. This is a critical security vulnerability.
+   - Create non-root user specifically for the application: RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 -G nodejs
+   - Set USER directive before running commands that don't need root, and MUST set before CMD/ENTRYPOINT: USER nodejs
+   - Use COPY --chown=nodejs:nodejs for file permissions.
+   - Remove unused packages and clear caches (e.g., rm -rf /var/lib/apt/lists/* or npm cache clean).
 
 4. **Layer Optimization**
    - Copy package files first (package.json, requirements.txt)

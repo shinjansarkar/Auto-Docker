@@ -32,7 +32,7 @@ import * as path from 'path';
 interface LLMCallMetrics {
     id: string;
     timestamp: Date;
-    provider: 'openai' | 'gemini' | 'anthropic' | 'langchain';
+    provider: 'openai' | 'gemini' | 'anthropic';
     model: string;
     operation: 'generate' | 'validate' | 'analyze' | 'fix';
     status: 'success' | 'failure' | 'partial';
@@ -277,7 +277,7 @@ export class AIObservabilityService {
      * Track an LLM API call
      */
     public async trackLLMCall(
-        provider: 'openai' | 'gemini' | 'anthropic' | 'langchain',
+        provider: 'openai' | 'gemini' | 'anthropic',
         model: string,
         operation: 'generate' | 'validate' | 'analyze' | 'fix',
         startTime: Date,
@@ -438,26 +438,13 @@ export class AIObservabilityService {
      * Calculate estimated cost
      */
     private calculateCost(
-        provider: 'openai' | 'gemini' | 'anthropic' | 'langchain',
+        provider: 'openai' | 'gemini' | 'anthropic',
         model: string,
         promptTokens: number,
         completionTokens: number
     ): number {
         
-        // Handle langchain - extract actual provider
-        let actualProvider: 'openai' | 'gemini' | 'anthropic' = 'openai';
-        
-        if (provider === 'langchain') {
-            if (model.includes('gpt')) {
-                actualProvider = 'openai';
-            } else if (model.includes('gemini')) {
-                actualProvider = 'gemini';
-            } else if (model.includes('claude')) {
-                actualProvider = 'anthropic';
-            }
-        } else {
-            actualProvider = provider;
-        }
+        const actualProvider = provider;
         
         const providerPricing = PRICING[actualProvider] as Record<string, { input: number; output: number }>;
         const pricing = providerPricing?.[model];

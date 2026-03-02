@@ -21,7 +21,7 @@ export class FileManager {
      */
     private detectBuildOutputFolder(frontendPath: string): string {
         const packageJsonPath = path.join(frontendPath, 'package.json');
-        
+
         if (!fs.existsSync(packageJsonPath)) {
             return 'dist'; // Default fallback
         }
@@ -651,7 +651,7 @@ export class FileManager {
             // Generate root-level docker-compose.yml and nginx.conf
             const dockerComposePath = path.join(this.workspaceRoot, 'docker-compose.yml');
             const nginxConfPath = path.join(this.workspaceRoot, 'nginx.conf');
-            
+
             // Generate frontend-specific nginx.conf for SPA routing
             const frontendNginxConfPath = path.join(frontendPath, 'nginx.conf');
 
@@ -673,9 +673,9 @@ export class FileManager {
             // (separate nginx service for reverse proxy)
             // For standard MERN stack (frontend + backend), skip root nginx.conf
             const dockerComposeContent = this.generateMonorepoDockerCompose(projectStructure);
-            const hasNginxService = dockerComposeContent.includes('nginx:') && 
-                                   dockerComposeContent.includes('image: nginx');
-            
+            const hasNginxService = dockerComposeContent.includes('nginx:') &&
+                dockerComposeContent.includes('image: nginx');
+
             if (hasNginxService) {
                 filesToWrite.push({
                     path: nginxConfPath,

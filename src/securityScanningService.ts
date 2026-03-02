@@ -201,7 +201,7 @@ export class SecurityScanningService {
         this.outputChannel = vscode.window.createOutputChannel('Auto Docker - Security Scanner');
         const config = vscode.workspace.getConfiguration('autoDocker');
         this.enabled = config.get('enableSecurityScanning', true);
-        this.strictMode = false; // strict mode disabled
+        this.strictMode = true; // explicitly enabled for security guarantees
     }
 
     /**
@@ -220,7 +220,7 @@ export class SecurityScanningService {
         dockerCompose: string;
         nginxConf?: string;
     }): Promise<SecurityScanResult> {
-        
+
         if (!this.enabled) {
             return this.getEmptyResult();
         }
@@ -824,7 +824,7 @@ export class SecurityScanningService {
         dockerCompose: string;
         nginxConf: string;
     }): SecurityIssue[] {
-        
+
         const issues: SecurityIssue[] = [];
         const allContent = `${content.dockerfile}\n${content.dockerCompose}\n${content.nginxConf}`;
 
@@ -833,7 +833,7 @@ export class SecurityScanningService {
             if (matches) {
                 // Deduplicate
                 const uniqueMatches = [...new Set(matches)];
-                
+
                 for (const match of uniqueMatches) {
                     // Determine which file
                     let file: 'dockerfile' | 'docker-compose' | 'nginx' | 'general' = 'general';
@@ -927,7 +927,7 @@ export class SecurityScanningService {
         // Overall status
         const statusEmoji = result.passed ? '✅' : '❌';
         const scoreEmoji = this.getScoreEmoji(result.score);
-        
+
         report += `${statusEmoji} Security Status: ${result.passed ? 'PASSED' : 'FAILED'}\n`;
         report += `${scoreEmoji} Security Score: ${result.score}/100\n`;
         report += `⏱️  Scan Duration: ${result.scanDuration}ms\n\n`;
@@ -1001,7 +1001,7 @@ export class SecurityScanningService {
         // Recommendations
         report += '💡 RECOMMENDATIONS\n';
         report += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
-        
+
         if (result.criticalCount > 0) {
             report += '🔴 Address all critical issues immediately\n';
         }
