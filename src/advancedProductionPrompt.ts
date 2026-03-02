@@ -171,24 +171,27 @@ CMD ["nginx", "-g", "daemon off;"]
 
 ### For Backend Projects (Node.js example):
 \`\`\`dockerfile
-FROM node:20-alpine
+# ALWAYS pin specific versions, NEVER use :latest. Example: node:20.11.1-alpine
+FROM node:20.11.1-alpine
 WORKDIR /app
 
-# Non-root user
+# SECURITY: Create and use a non-root user
 RUN addgroup -g 1001 nodejs && adduser -S nodejs -u 1001 -G nodejs
 
 # Install dependencies
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --only=production && npm cache clean --force
 
-# Copy source
-COPY . .
+# Copy source with correct permissions
+COPY --chown=nodejs:nodejs . .
 
+# SECURITY: Switch to non-root user before running the app
 USER nodejs
 EXPOSE 3000
 
+# SECURITY: Always include health checks
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \\
-  CMD node healthcheck.js || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
 CMD ["node", "server.js"]
 \`\`\`
@@ -351,18 +354,20 @@ server {
 
 ---
 
-## 🚨 CRITICAL RULES
+## 🚨 CRITICAL RULES (ZERO TOLERANCE FOR SECURITY VIOLATIONS)
 
 1. ✅ **nginx.conf MUST be SEPARATE** - Never embed in Dockerfile
 2. ✅ **Use EXACT output folder**: \`${hasFrontend ? analysis.frontends[0]?.outputFolder || 'dist' : 'dist'}\`
 3. ✅ **Multi-stage builds** for frontend
-4. ✅ **Health checks** for all services
-5. ✅ **Non-root users** in containers
-6. ✅ **Environment variables** via .env
-7. ✅ **Persistent volumes** for databases
-8. ✅ **Security headers** in nginx
-9. ✅ **Resource limits** in docker-compose
-10. ✅ **Proper service dependencies** with health condition checks
+4. ✅ **Health checks** for all services MUST be present
+5. ✅ **ABSOLUTELY NO ROOT USERS** - You MUST create and use a non-root user in EVERY Dockerfile
+6. ✅ **PINNED VERSIONS ONLY** - NEVER use \`:latest\` tags for any image (e.g., use \`node:20.11.1-alpine\`, not \`node:alpine\`)
+7. ✅ **Environment variables** via .env ONLY. NEVER hardcode secrets or passwords in any configuration file
+8. ✅ **Persistent volumes** for databases
+9. ✅ **Security headers** MUST be included in nginx
+10. ✅ **Resource limits** MUST be defined in docker-compose
+11. ✅ **Proper service dependencies** with health condition checks
+12. ✅ **NO PRIVILEGED MODE** - Never add \`privileged: true\` or \`network_mode: host\` in docker-compose
 
 ---
 

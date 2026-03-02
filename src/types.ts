@@ -110,4 +110,56 @@ export interface LLMResponse {
   };
 }
 
+// Docker Files Interface
+export interface DockerFiles {
+  dockerfile: string;
+  dockerCompose: string;
+  dockerIgnore: string;
+  nginxConf?: string;
+}
+
+// Project Structure Interface (Legacy - used for compatibility)
+export interface ProjectStructure {
+  projectType: string;
+  frontend?: string;
+  backend?: string;
+  database?: string;
+  databases?: string[]; // Multiple databases
+  files: string[];
+  dependencies: { [key: string]: any };
+  hasMultiStage: boolean;
+  description: string;
+  hasEnvFile?: boolean;
+  envVars?: string[];
+  isMonorepo?: boolean;
+  isSingleFolderFullstack?: boolean; // Single folder with both frontend and backend
+  frontendPath?: string;
+  backendPath?: string;
+  frontendDependencies?: any;
+  backendDependencies?: any;
+  // Enhanced Monorepo support
+  workspaces?: string[]; // npm/yarn/pnpm workspaces (raw patterns)
+  expandedWorkspaces?: string[]; // Expanded workspace paths
+  allFrontendServices?: Array<{ path: string; dependencies: any }>; // All frontend services
+  allBackendServices?: Array<{ path: string; dependencies: any; language: string }>; // All backend services
+  buildTool?: 'turbo' | 'nx' | 'lerna' | 'npm' | 'yarn' | 'pnpm'; // Build tool detection
+  monorepoType?: 'yarn' | 'pnpm' | 'lerna' | 'nx' | 'rush' | 'turbo' | 'none'; // Detected monorepo type
+  services?: Array<{ path: string; language: string; framework: string }>; // Multi-language services
+  detectionLog?: string[]; // Detection log for debugging
+  hasPrisma?: boolean; // Prisma ORM detection
+  hasCelery?: boolean; // Celery worker detection
+  hasWebSocket?: boolean; // WebSocket support detection
+  // Advanced services
+  messageQueue?: 'rabbitmq' | 'kafka' | 'redis-streams' | 'activemq';
+  cacheLayer?: 'redis' | 'memcached';
+  searchEngine?: 'elasticsearch' | 'opensearch';
+  reverseProxy?: 'nginx' | 'traefik' | 'caddy';
+  monitoring?: 'prometheus' | 'grafana';
+  // Frontend/Backend classification flags (for Nginx and Docker generation)
+  isFrontendOnly?: boolean;  // true if has frontend && !backend
+  isBackendOnly?: boolean;   // true if has backend && !frontend
+  isFullstack?: boolean;     // true if has both frontend && backend
+  projectRoot?: string; // Added for compatibility
+}
+
 

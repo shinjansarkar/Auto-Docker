@@ -1,13 +1,29 @@
 {
 	"compilerOptions": {
-		"module": "Node16",
+		"module": "commonjs",
 		"target": "ES2022",
 		"outDir": "out",
 		"lib": [
-			"ES2022"
+			"ES2022",
+			"DOM"
 		],
 		"sourceMap": true,
 		"rootDir": "src",
-		"strict": true
-	}
+		"strict": false,
+		"skipLibCheck": true,
+		"noImplicitAny": false,
+		"resolveJsonModule": true,
+		"moduleResolution": "node",
+		"types": [
+			"node",
+			"vscode"
+		],
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
+		"forceConsistentCasingInFileNames": true
+	},
+	"exclude": [
+		"node_modules",
+		"test-projects"
+	]
 }
