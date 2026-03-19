@@ -18,6 +18,10 @@ Unlike traditional Docker generators that rely on hardcoded templates, AutoDocke
 
 **Powered by Claude Sonnet 4 & Gemini 1.5 Flash**
 
+## 🎥 Demo
+
+[![Watch Demo on Vimeo](https://vumbnail.com/1169277484.jpg)](https://vimeo.com/1169277484)
+
 ## ✨ Key Features
 
 ### 🤖 **100% AI-Powered (Zero Templates)**
